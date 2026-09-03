@@ -1,0 +1,27 @@
+# paper — a high-contrast light theme, for terminals with a light background.
+#
+# Run it with: hunk --theme paper
+
+name = "paper"
+
+[ui]
+background          = "#fdfdf7"
+foreground          = "#2c2c2c"
+border              = "#d4d0c4"
+line_number         = "#9a958a"
+file_header         = "#0b5f8a"
+hunk_header         = "#6b4a9c"
+statusbar_fg        = "#fdfdf7"
+statusbar_bg        = "#3c3c3c"
+sidebar_fg          = "#4a4a4a"
+sidebar_selected_fg = "#fdfdf7"
+sidebar_selected_bg = "#0b5f8a"
+
+[diff]
+added_fg        = "#1a6b2a"
+added_bg        = "#e4f5e4"
+removed_fg      = "#a01b2c"
+removed_bg      = "#fbe4e6"
+context_fg      = "#3c3c3c"
+added_word_bg   = "#b9e8b9"
+removed_word_bg = "#f6bfc5"
