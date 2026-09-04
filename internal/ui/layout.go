@@ -12,11 +12,13 @@ type RowKind int
 
 // The kinds of row the flattened view is made of.
 const (
-	RowFile   RowKind = iota // a file's header line
-	RowHunk                  // an @@ line
-	RowPair                  // one line of the diff, on one or both sides
-	RowNotice                // "Binary file changed", "no changes", etc.
-	RowSpacer                // blank separator between files
+	RowFile        RowKind = iota // a file's header line
+	RowHunk                       // an @@ line
+	RowPair                       // one line of the diff, on one or both sides
+	RowNotice                     // "Binary file changed", "no changes", etc.
+	RowSpacer                     // blank separator between files
+	RowBlockTop                   // the rule above a changed block
+	RowBlockBottom                // the rule below a changed block
 )
 
 // Side is one half of a paired row. Empty means this side has no line here,
@@ -38,7 +40,24 @@ type Row struct {
 	HunkIdx     int // -1 outside a hunk
 	Text        string
 	Left, Right Side
+	// BoxLeft and BoxRight say what a change block's outline does in each pane
+	// on this row. Each pane closes on its own last changed line, so a one-line
+	// removal that became seven lines shows a short box facing a tall one.
+	BoxLeft, BoxRight BoxPart
+	// Arrow marks the row that carries the direction marker between the panes.
+	Arrow bool
 }
+
+// BoxPart is one pane's share of a change block's outline on a single row.
+type BoxPart int
+
+// The parts of an outline a row can carry.
+const (
+	BoxNone   BoxPart = iota // this pane is outside the block here
+	BoxTop                   // the rule above it
+	BoxMid                   // enclosed: the box's sides run down this row
+	BoxBottom                // the rule below it
+)
 
 // View is the whole render-ready diff plus the indexes navigation needs.
 type View struct {
@@ -83,7 +102,7 @@ func Build(files []diff.File, split bool) *View {
 			v.Rows = append(v.Rows, Row{
 				Kind: RowHunk, FileIdx: fi, HunkIdx: hi, Text: h.Header,
 			})
-			for _, r := range hunkRows(h, split) {
+			for _, r := range wrapBlocks(hunkRows(h, split), split) {
 				r.FileIdx, r.HunkIdx = fi, hi
 				v.Rows = append(v.Rows, r)
 			}
@@ -175,6 +194,98 @@ func hunkRows(h diff.Hunk, split bool) []Row {
 	}
 	flush()
 	return rows
+}
+
+// wrapBlocks outlines every run of changed rows. The outline is one shape
+// crossing both panes, but each pane closes on its own last changed line, so a
+// one-line removal that became seven additions draws a short box on the left
+// facing a tall one on the right — the outline itself shows the shape of the
+// change. Unified view has a single column, so there both panes move together.
+//
+// It runs on a hunk's rows before they are appended to the view, so the row
+// indexes Build records for files and hunks stay correct.
+//
+// ponytail: the outline's rule rows are ordinary rows, so j/k stops on them and
+// the cursor can rest on a rule. They carry the hunk's identity, so marking and
+// staging from there still act on the right hunk. Skipping them means giving
+// moveTo a direction at every call site; do that if it grates in use.
+func wrapBlocks(rows []Row, split bool) []Row {
+	out := make([]Row, 0, len(rows))
+	for i := 0; i < len(rows); {
+		if !changedRow(rows[i]) {
+			out = append(out, rows[i])
+			i++
+			continue
+		}
+
+		// The run is every changed row from here on; context ends it.
+		j := i
+		lastLeft, lastRight := -1, -1
+		for j < len(rows) && changedRow(rows[j]) {
+			if !rows[j].Left.Empty {
+				lastLeft = j
+			}
+			if !rows[j].Right.Empty {
+				lastRight = j
+			}
+			j++
+		}
+		if !split {
+			// One column: both edges belong to the same box, which ends with
+			// the run.
+			lastLeft, lastRight = j-1, j-1
+		}
+
+		edge := Row{FileIdx: rows[i].FileIdx, HunkIdx: rows[i].HunkIdx, Kind: RowBlockTop}
+		edge.BoxLeft, edge.BoxRight = part(lastLeft >= 0, BoxTop), part(lastRight >= 0, BoxTop)
+		out = append(out, edge)
+
+		for k := i; k < j; k++ {
+			rows[k].BoxLeft = spanPart(k, lastLeft)
+			rows[k].BoxRight = spanPart(k, lastRight)
+			// The direction marker goes on the first enclosed row of a change
+			// that crosses panes; a pure addition or deletion has no direction.
+			rows[k].Arrow = k == i && split && lastLeft >= 0 && lastRight >= 0
+			out = append(out, rows[k])
+		}
+
+		edge.Kind = RowBlockBottom
+		edge.BoxLeft, edge.BoxRight = part(lastLeft == j-1, BoxBottom), part(lastRight == j-1, BoxBottom)
+		out = append(out, edge)
+		i = j
+	}
+	return out
+}
+
+// spanPart places a row inside one pane's box: enclosed while the pane still
+// has changed lines coming, the closing rule on the row right after its last
+// one, and nothing at all once the box is shut.
+func spanPart(row, last int) BoxPart {
+	switch {
+	case last < 0 || row > last+1:
+		return BoxNone
+	case row == last+1:
+		return BoxBottom
+	default:
+		return BoxMid
+	}
+}
+
+func part(ok bool, p BoxPart) BoxPart {
+	if ok {
+		return p
+	}
+	return BoxNone
+}
+
+// changedRow reports whether a row carries a change on either side, which is
+// what a block is made of.
+func changedRow(r Row) bool {
+	if r.Kind != RowPair {
+		return false
+	}
+	return r.Left.Kind == diff.Added || r.Left.Kind == diff.Removed ||
+		r.Right.Kind == diff.Added || r.Right.Kind == diff.Removed
 }
 
 func leftSide(l diff.Line) Side  { return Side{Kind: l.Kind, Num: l.OldNum, Text: l.Text} }

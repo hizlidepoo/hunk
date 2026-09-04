@@ -7,20 +7,23 @@
 </div>
 
 A standalone, themeable diff viewer for the terminal. Side-by-side, word-level
-highlighting, keyboard-driven — and when you run it inside a dirty git
-repository, it turns into a review pass you can stage from, hunk by hunk.
+highlighting, keyboard-driven — and when you run it inside a git repository, it
+turns into a live review pass you can stage from, hunk by hunk.
 
 Built for the diffs coding agents produce: large, spread across many files, and
 miserable to read as raw `git diff` output.
 
 ```
-┌ Files ────┬─ auth/token.go ──────────────────────────────────────────────────┐
-│ ● auth/…  │ @@ -18,5 +18,5 @@ func Validate(tok string) error                │
-│   +12 -4  │  18 │     if tok == "" {      18 │     if tok == "" {             │
-│ ◐ ui/vie… │  19 │       return ErrEmpty    19 │       return fmt.Errorf("empt │
-│   +1 -0   │  20 │     }                    20 │     }                         │
-│ · main.go │  21 │     claims := parse(t    21 │     claims := parseWithLeeway │
-└───────────┴─ space mark  A file  w stage  ? help  q quit ────────────────────┘
+┌ Files ────┬ auth/token.go ───────────────────────────────────────────────────┐
+│ ● auth/…  │ @@ -18,6 +18,7 @@ func Validate(tok string) error                │
+│   +12 -4  │  18 │   if tok == "" {          │ 18 │   if tok == "" {          │
+│ ◐ ui/vie… │╭────────────────────────────────┬───────────────────────────────╮│
+│   +1 -0   ││ 19 │     return ErrEmpty       → 19 │     if debug {           ││
+│ · main.go │╰────────────────────────────────┤ 20 │       log(tok)           ││
+│           │                                 │ 21 │     }                    ││
+│           │                                 ╰───────────────────────────────╯│
+│           │  20 │   }                       │ 22 │   }                       │
+└───────────┴ space mark  A file  w stage  u undo  f follow  ? help  q quit ───┘
 ```
 
 > Screenshots and a demo GIF: **TODO** — the ASCII sketch above is a stand-in.
@@ -78,9 +81,22 @@ In working-tree review mode you also get:
 | `a` / `d` | mark / unmark, then jump to the next hunk |
 | `A` / `D` | mark / unmark every hunk in this file |
 | `w` | stage what is marked (asks first) |
+| `u` | undo the last stage |
+| `f` | pause / resume following the working tree |
 
 Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.
+
+Every run of changed lines is wrapped in a rounded outline that crosses from one
+pane into the other, with an arrow on the seam pointing the way the change goes.
+Each pane closes on its own last changed line, so one line becoming four draws a
+short box facing a tall one — the outline itself shows the shape of the change.
+Inside a line, the words that actually changed are painted a shade stronger.
+
+hunk follows the working tree while it is open: edits made by you, your editor,
+or an agent show up on their own, and marks on untouched hunks survive the
+reload. `f` pauses and resumes following. Because of that, opening hunk in a
+clean repository is fine — it waits, and fills in with the first change.
 
 Staging runs `git apply --cached`, so it **only ever writes the index** — no
 working-tree file is created, modified, or deleted by hunk. If you stage
@@ -104,11 +120,17 @@ Themes are TOML files in `~/.config/hunk/themes/` (`$XDG_CONFIG_HOME` is
 honoured). A file named `midnight.toml` there is available as `--theme midnight`.
 
 **Every key is optional.** Anything you leave out keeps the default theme's
-value, so a two-line theme is a perfectly good theme:
+value, so a two-line theme is a perfectly good theme. One key does a lot of
+work: `ui.accent` is every highlight hunk draws — the `@@` line, the current
+hunk, a change block's outline and its arrow, the status bar, the selected file
+— so recoloring the highlight is a one-line edit:
 
 ```toml
 # ~/.config/hunk/themes/midnight.toml
 name = "midnight"
+
+[ui]
+accent = "#7aa2f7"
 
 [diff]
 added_fg   = "#7ee787"
@@ -141,7 +163,7 @@ GitHub repo. That is the whole protocol.
 ## Not in v1
 
 Reverting hunks in the working tree, reviewing already-staged changes,
-committing from inside hunk, watch mode, three-way merge, syntax highlighting.
+committing from inside hunk, three-way merge, syntax highlighting.
 See [the issues](https://github.com/wmarquardt/hunk/issues) or open one.
 
 ## Contributing

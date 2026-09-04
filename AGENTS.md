@@ -94,6 +94,21 @@ windowing, and next/prev are index arithmetic. Split and unified are *different
 row lists* — a changed line is one row in split, two in unified — so toggling
 `s` rebuilds the view and re-seeks to the same file.
 
+`Build` also wraps every run of changed rows in a block outline: `wrapBlocks`
+brackets the run with a `RowBlockTop` and a `RowBlockBottom` and gives every row
+a `BoxPart` per pane (`BoxNone`/`Top`/`Mid`/`Bottom`). Each pane closes on its
+own last changed line, so a pane's closing rule can land on a row where the
+other pane still has text — that is how one line becoming four draws a short box
+facing a tall one. `Model.divider` turns the two parts into the seam glyph, and
+`Row.Arrow` marks the row carrying the `→`. It runs per hunk, before the rows
+are appended, so the row indexes in `FileRows`/`HunkRows` stay correct. Every
+row reserves the two outermost columns for the outline, boxed or not — otherwise
+text would shift sideways between a context line and a change.
+
+`ui.accent` is the single highlight color: hunk header, current-hunk rail, block
+outline, status bar, selected file. Adding a second highlight color means asking
+whether it should be the accent instead.
+
 Only the visible rows are ever rendered (`renderBody`). Do not replace this with
 `bubbles/viewport`: it renders the whole diff into one string, which is exactly
 the wrong shape for the 20k-line diffs hunk exists for.
@@ -124,6 +139,14 @@ as parsed and lets `git apply --recount` fix the line counts. Do not recompute
 **Licenses stay permissive.** No GPL code, not even vendored for reference.
 Current dependencies: Bubble Tea and Lip Gloss (MIT), go-gitdiff (MIT), go-udiff
 (BSD-3 + MIT), BurntSushi/toml (MIT), charmbracelet/x (MIT).
+
+**Docs ship in the same commit as the change.** README.md, AGENTS.md,
+CONTRIBUTING.md and the `--help` usage text are part of the change, not a
+follow-up: a new key, flag, mode, default, or behavior change is not done until
+every one of them that mentions the old behavior says the new one. Same for
+things that stop being true — a feature leaving "Not in v1" leaves that list in
+the same commit that ships it. Before opening a PR, grep the docs for what you
+touched and read the key tables against `renderHelp` in `internal/ui/model.go`.
 
 **Tests ship in the same commit as the code.** No test may hit the network —
 remote theme tests use `httptest.Server`. Git tests build throwaway repos in

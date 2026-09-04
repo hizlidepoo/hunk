@@ -84,7 +84,7 @@ added_fg = "#123456"`,
 				for _, pair := range [][2]string{
 					{th.Diff.RemovedFg, def.Diff.RemovedFg},
 					{th.UI.Background, def.UI.Background},
-					{th.UI.SidebarSelectedBg, def.UI.SidebarSelectedBg},
+					{th.UI.Accent, def.UI.Accent},
 					{th.Diff.AddedWordBg, def.Diff.AddedWordBg},
 				} {
 					if pair[0] != pair[1] {

@@ -684,6 +684,10 @@ func (m *Model) renderBody() []string {
 	w := m.contentWidth() - 1
 	out := make([]string, 0, m.bodyHeight())
 
+	if len(m.view.Rows) == 0 {
+		return m.renderEmpty(w + 1)
+	}
+
 	// Only the current file's rows are drawn; anything past its end is blank,
 	// even when that leaves empty space, so files never mix on screen.
 	_, hi := m.fileSpan(m.cur)
@@ -696,6 +700,37 @@ func (m *Model) renderBody() []string {
 		}
 		focus := hlo <= row && row < hhi
 		out = append(out, m.railMark(row, hlo, hhi)+m.renderRow(m.view.Rows[row], w, focus))
+	}
+	return out
+}
+
+// renderEmpty fills the body when there is no diff to show. In a repo that is
+// not "done" but "not yet": hunk keeps following the tree, so the message says
+// what it is waiting for.
+func (m *Model) renderEmpty(w int) []string {
+	msg := "no changes to show"
+	switch {
+	case m.staging() && m.live:
+		msg = "nothing to stage yet — watching for edits"
+	case m.staging() && m.watch != nil:
+		msg = "nothing to stage — following is paused, press f to resume"
+	case m.staging():
+		msg = "nothing to stage — the working tree is clean"
+	}
+
+	blank := m.st.base.Render(strings.Repeat(" ", w))
+	out := make([]string, 0, m.bodyHeight())
+	mid := m.bodyHeight() / 3
+	for i := 0; i < m.bodyHeight(); i++ {
+		if i != mid {
+			out = append(out, blank)
+			continue
+		}
+		pad := (w - lipgloss.Width(msg)) / 2
+		if pad < 0 {
+			pad = 0
+		}
+		out = append(out, fit(m.st.base.Render(strings.Repeat(" ", pad))+m.st.notice.Render(msg), 0, w, m.st.base))
 	}
 	return out
 }
@@ -755,14 +790,91 @@ func (m *Model) renderRow(r Row, w int, focus bool) string {
 		return m.st.base.Render(strings.Repeat(" ", w))
 	}
 
+	// The two outermost columns belong to the change block's outline. They are
+	// reserved on every row, boxed or not, or text would shift sideways as the
+	// eye moves from a context line into a change.
+	inner := w - 2
+	lead := m.st.box.Render(edgeGlyph(r.BoxLeft, true))
+	trail := m.st.box.Render(edgeGlyph(r.BoxRight, false))
+
 	if !m.builtSplit {
-		return m.renderUnifiedRow(r, w)
+		return lead + m.paneOr(r.BoxLeft, inner, func() string {
+			return m.renderUnifiedRow(r, inner)
+		}) + trail
 	}
 
-	half := (w - 1) / 2
-	left := m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll)
-	right := m.st.renderSide(r.Right, "", numWidth, w-half-1-numWidth-1, m.hscroll)
-	return left + m.st.gutter.Render("│") + right
+	half := (inner - 1) / 2
+	left := m.paneOr(r.BoxLeft, half, func() string {
+		return m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll)
+	})
+	right := m.paneOr(r.BoxRight, inner-half-1, func() string {
+		return m.st.renderSide(r.Right, "", numWidth, inner-half-1-numWidth-1, m.hscroll)
+	})
+	return lead + left + m.divider(r) + right + trail
+}
+
+// paneOr draws a pane's share of a rule row, or the pane's normal contents when
+// the outline is not opening or closing here.
+func (m *Model) paneOr(p BoxPart, width int, draw func() string) string {
+	if p == BoxTop || p == BoxBottom {
+		return m.st.box.Render(strings.Repeat(lipgloss.RoundedBorder().Top, width))
+	}
+	return draw()
+}
+
+// edgeGlyph is the outline's outer column for one pane: a corner where the box
+// opens or closes, its side while it is open, nothing when the pane is outside.
+func edgeGlyph(p BoxPart, left bool) string {
+	b := lipgloss.RoundedBorder()
+	switch p {
+	case BoxTop:
+		if left {
+			return b.TopLeft
+		}
+		return b.TopRight
+	case BoxMid:
+		return b.Left
+	case BoxBottom:
+		if left {
+			return b.BottomLeft
+		}
+		return b.BottomRight
+	default:
+		return " "
+	}
+}
+
+// divider draws the column between the panes. Inside a block it is the seam
+// where the two halves of the outline meet, so it shows what each side is
+// doing: both open, one closing while the other runs on, or one pane alone.
+func (m *Model) divider(r Row) string {
+	if r.Arrow {
+		// The change reads left to right — old on the left, new on the right —
+		// and the marker says so where the two halves join.
+		return m.st.box.Bold(true).Render("→")
+	}
+
+	b := lipgloss.RoundedBorder()
+	glyph := ""
+	switch {
+	case r.BoxLeft == BoxNone && r.BoxRight == BoxNone:
+		return m.st.gutter.Render("│")
+	case r.BoxLeft == BoxNone:
+		glyph = map[BoxPart]string{BoxTop: b.TopLeft, BoxMid: b.Left, BoxBottom: b.BottomLeft}[r.BoxRight]
+	case r.BoxRight == BoxNone:
+		glyph = map[BoxPart]string{BoxTop: b.TopRight, BoxMid: b.Right, BoxBottom: b.BottomRight}[r.BoxLeft]
+	case r.BoxLeft == BoxTop:
+		glyph = "┬"
+	case r.BoxLeft == BoxBottom && r.BoxRight == BoxBottom:
+		glyph = "┴"
+	case r.BoxLeft == BoxBottom:
+		glyph = "┤" // the left pane closes; the right box runs on past it
+	case r.BoxRight == BoxBottom:
+		glyph = "├"
+	default:
+		glyph = b.Left
+	}
+	return m.st.box.Render(glyph)
 }
 
 // renderUnifiedRow shows a single column with +/-/space signs, the shape people
@@ -863,7 +975,15 @@ func (m *Model) renderStatus() string {
 	}
 	if len(m.view.Rows) == 0 {
 		if m.staging() {
-			return fit(m.st.statusbar.Render(" working tree clean  ·  q quit"), 0, m.width, m.st.statusbar)
+			status := " working tree clean"
+			if m.watch != nil {
+				live := "○ paused"
+				if m.live {
+					live = "● live"
+				}
+				status += "  ·  " + live + "  ·  f follow"
+			}
+			return fit(m.st.statusbar.Render(status+"  ·  q quit"), 0, m.width, m.st.statusbar)
 		}
 		return fit(m.st.statusbar.Render(" no changes  ·  q quit"), 0, m.width, m.st.statusbar)
 	}

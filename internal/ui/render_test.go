@@ -241,3 +241,53 @@ func TestHorizontalScroll(t *testing.T) {
 func keyPress(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: rune(s[0]), Text: s}
 }
+
+// The outline is one shape crossing both panes: its rule must splice into the
+// column divider that the rows above and below draw, or the box reads as two
+// unrelated brackets. The direction marker sits on the same seam.
+func TestChangeBlockOutlineAlignsWithTheDivider(t *testing.T) {
+	m := newTestModel(t, sample)
+	lines := screen(t, m, 140, 20)
+
+	var top, ctx, arrow string
+	for i, l := range lines {
+		if top == "" && strings.Contains(l, "╭") && i > 0 {
+			top, ctx = l, lines[i-1]
+		}
+		if arrow == "" && strings.Contains(l, "→") {
+			arrow = l
+		}
+	}
+	if top == "" {
+		t.Fatalf("no change block outline on screen:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(top, "┬") {
+		t.Errorf("the top rule does not splice into the divider: %q", top)
+	}
+	// Compare cell columns, not byte offsets: box glyphs are three bytes each.
+	seam := col(ctx, '│')
+	if col(top, '┬') != seam {
+		t.Errorf("the splice is at column %d but the divider is at %d:\n%q\n%q",
+			col(top, '┬'), seam, ctx, top)
+	}
+	if arrow == "" {
+		t.Error("a change that crosses panes should carry a direction marker")
+	} else if col(arrow, '→') != seam {
+		t.Errorf("the direction marker is at column %d, want the seam at %d: %q",
+			col(arrow, '→'), seam, arrow)
+	}
+	if !strings.HasSuffix(strings.TrimRight(top, " "), "╮") {
+		t.Errorf("the top rule does not close on the right: %q", top)
+	}
+}
+
+// col is the last cell column r appears at in a rendered line.
+func col(line string, r rune) int {
+	last := -1
+	for i, c := range []rune(line) {
+		if c == r {
+			last = i
+		}
+	}
+	return last
+}

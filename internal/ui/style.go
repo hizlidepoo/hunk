@@ -50,6 +50,9 @@ type styles struct {
 	removedWord lipgloss.Style
 	filler      lipgloss.Style
 	cursor      lipgloss.Style
+	// box draws a change block's outline, in the same accent as everything else
+	// hunk points with.
+	box lipgloss.Style
 }
 
 func newStyles(t *theme.Theme) styles {
@@ -59,18 +62,18 @@ func newStyles(t *theme.Theme) styles {
 	return styles{
 		base:        base,
 		fileHeader:  base.Foreground(c(t.UI.FileHeader)).Bold(true),
-		hunkHeader:  base.Foreground(c(t.UI.HunkHeader)),
+		hunkHeader:  base.Foreground(c(t.UI.Accent)),
 		notice:      base.Foreground(c(t.UI.LineNumber)).Italic(true),
 		lineNum:     base.Foreground(c(t.UI.LineNumber)),
 		gutter:      base.Foreground(c(t.UI.Border)),
-		statusbar:   lipgloss.NewStyle().Background(c(t.UI.StatusbarBg)).Foreground(c(t.UI.StatusbarFg)),
+		statusbar:   lipgloss.NewStyle().Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)),
 		help:        base.Foreground(c(t.UI.Foreground)),
 		sidebar:     base.Foreground(c(t.UI.SidebarFg)),
-		sidebarSel:  lipgloss.NewStyle().Background(c(t.UI.SidebarSelectedBg)).Foreground(c(t.UI.SidebarSelectedFg)),
+		sidebarSel:  lipgloss.NewStyle().Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)),
 		modal:       base.Border(lipgloss.RoundedBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.UI.Border)).Padding(0, 2),
 		modalTitle:  base.Foreground(c(t.UI.FileHeader)).Bold(true),
-		focusRail:   base.Foreground(c(t.UI.HunkHeader)).Bold(true),
-		focusHeader: base.Background(c(t.UI.HunkHeader)).Foreground(c(t.UI.Background)).Bold(true),
+		focusRail:   base.Foreground(c(t.UI.Accent)).Bold(true),
+		focusHeader: base.Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)).Bold(true),
 		railMarked:  base.Foreground(c(t.Diff.AddedFg)).Bold(true),
 		stagedFg:    c(t.Diff.AddedFg),
 		partialFg:   c(t.UI.LineNumber),
@@ -80,7 +83,8 @@ func newStyles(t *theme.Theme) styles {
 		addedWord:   base.Background(c(t.Diff.AddedWordBg)).Foreground(c(t.Diff.AddedFg)).Bold(true),
 		removedWord: base.Background(c(t.Diff.RemovedWordBg)).Foreground(c(t.Diff.RemovedFg)).Bold(true),
 		filler:      base.Foreground(c(t.UI.Border)),
-		cursor:      base.Foreground(c(t.UI.StatusbarBg)).Bold(true),
+		cursor:      base.Foreground(c(t.UI.Accent)).Bold(true),
+		box:         base.Foreground(c(t.UI.Accent)),
 	}
 }
 
@@ -170,6 +174,9 @@ func fit(styled string, hscroll, width int, pad lipgloss.Style) string {
 // renderSide renders one column of a row: the line number gutter and the text.
 func (s styles) renderSide(side Side, sign string, numWidth, textWidth, hscroll int) string {
 	lineStyle, wordStyle := s.lineStyles(side.Kind)
+	if textWidth <= 0 {
+		return "" // no room for this column at all; the caller pads the row
+	}
 
 	if side.Empty {
 		// An absent side is painted in the frame color, not in added/removed:
@@ -182,7 +189,13 @@ func (s styles) renderSide(side Side, sign string, numWidth, textWidth, hscroll 
 	if side.Num > 0 {
 		num = strconv.Itoa(side.Num)
 	}
-	gutter := s.lineNum.Render(padLeft(num, numWidth) + " ")
+	// The number carries the line's own background on a changed line, so the
+	// tint runs the full width of the block instead of starting mid-row.
+	numStyle := s.lineNum
+	if side.Kind != diff.Context {
+		numStyle = numStyle.Background(lineStyle.GetBackground())
+	}
+	gutter := numStyle.Render(padLeft(num, numWidth) + " ")
 
 	text, ranges := expandTabs(side.Text, side.Ranges)
 	body := styleText(sign+text, shiftRanges(ranges, len(sign)), lineStyle, wordStyle)
