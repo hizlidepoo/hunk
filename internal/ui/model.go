@@ -45,10 +45,30 @@ type Model struct {
 
 	// Git review mode. repo is nil for a plain diff, in which case marking and
 	// staging are not offered at all.
-	repo    *git.Repo
-	marks   marks
-	confirm bool
-	msg     string
+	repo  *git.Repo
+	marks marks
+	msg   string
+
+	// lastPatch and lastWhole record the most recent stage so "u" can take it
+	// straight back out of the index — the undo for w.
+	lastPatch string
+	lastWhole []string
+
+	// staged and unstaged are the paths git reports as having index and
+	// working-tree changes, so the sidebar can show what is already approved.
+	staged   map[string]bool
+	unstaged map[string]bool
+
+	// hints are the clickable option zones on the status bar, rebuilt on every
+	// render so mouse hit-testing matches exactly what is on screen.
+	hints []hintZone
+}
+
+// hintZone maps a horizontal span of the status bar to the key its label
+// stands for, so a click on the label does what the key does.
+type hintZone struct {
+	x0, x1 int // inclusive column range on the status row
+	key    string
 }
 
 // New builds a model over an already-parsed diff.
@@ -69,7 +89,32 @@ func NewGit(repo *git.Repo, files []diff.File, t *theme.Theme) *Model {
 	m := New(files, t)
 	m.repo = repo
 	m.marks = marks{}
+	m.refreshGitState()
 	return m
+}
+
+// refreshGitState reads which files git considers staged and unstaged, so the
+// sidebar can mark approved files without re-deriving it from the diff text.
+func (m *Model) refreshGitState() {
+	m.staged, m.unstaged = map[string]bool{}, map[string]bool{}
+	if m.repo == nil {
+		return
+	}
+	if paths, err := m.repo.StagedPaths(); err == nil {
+		for _, p := range paths {
+			m.staged[p] = true
+		}
+	}
+	if paths, err := m.repo.UnstagedPaths(); err == nil {
+		for _, p := range paths {
+			m.unstaged[p] = true
+		}
+	}
+	if paths, err := m.repo.Untracked(); err == nil {
+		for _, p := range paths {
+			m.unstaged[p] = true
+		}
+	}
 }
 
 // Run puts the model on screen and blocks until the user quits.
@@ -125,6 +170,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseClickMsg:
+		return m.handleClick(msg)
+
+	case tea.MouseWheelMsg:
+		return m.handleWheel(msg)
 	}
 	return m, nil
 }
@@ -136,16 +187,18 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.confirm {
-		return m.handleConfirm(msg.String())
-	}
-
 	// A keystroke means the last result has been read.
 	m.msg = ""
 
-	switch msg.String() {
+	return m, m.command(msg.String())
+}
+
+// command runs the action bound to a key. It is shared by the keyboard and by
+// clicks on the status-bar option labels, so both do exactly the same thing.
+func (m *Model) command(key string) tea.Cmd {
+	switch key {
 	case "q", "ctrl+c":
-		return m, tea.Quit
+		return tea.Quit
 
 	case "j", "down":
 		m.moveTo(m.cur + 1)
@@ -189,10 +242,83 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.showHelp = true
 
-	case "space", "a", "d", "A", "D", "w":
+	case "space", "a", "d", "A", "D", "w", "u":
 		if m.staging() {
-			m.handleMarkKey(msg.String())
+			m.handleMarkKey(key)
 		}
+	}
+	return nil
+}
+
+// handleClick routes a left click to whatever is under the pointer: an option
+// on the status bar, a file in the sidebar, or a row in the diff body.
+func (m *Model) handleClick(e tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if e.Button != tea.MouseLeft {
+		return m, nil
+	}
+	// A click, like a keystroke, dismisses the help overlay and does nothing
+	// else while it is up.
+	if m.showHelp {
+		m.showHelp = false
+		return m, nil
+	}
+	m.msg = ""
+
+	x, y := e.X, e.Y
+
+	// Status bar: the bottom line. A click on an option label runs its key.
+	if y == m.bodyHeight() {
+		for _, h := range m.hints {
+			if x >= h.x0 && x <= h.x1 {
+				return m, m.command(h.key)
+			}
+		}
+		return m, nil
+	}
+
+	// Sidebar: the left column, when shown. A click jumps to that file.
+	if m.sidebar() && x < sidebarWidth {
+		if idx := m.sidebarFileAt(y); idx >= 0 {
+			m.moveTo(m.view.FileRows[idx])
+		}
+		return m, nil
+	}
+
+	// Body: put the cursor on the clicked row so the next mark or jump acts on
+	// what the user pointed at.
+	if row := m.top + y; row < len(m.view.Rows) {
+		m.moveTo(row)
+	}
+	return m, nil
+}
+
+// sidebarFileAt maps a body-row y to the file index drawn there, or -1 for a
+// blank line past the end. It mirrors the windowing in renderSidebar.
+func (m *Model) sidebarFileAt(y int) int {
+	cur := 0
+	if m.cur < len(m.view.Rows) {
+		cur = m.view.Rows[m.cur].FileIdx
+	}
+	start := 0
+	if h := m.bodyHeight(); cur >= h {
+		start = cur - h + 1
+	}
+	idx := start + y
+	if idx < 0 || idx >= len(m.files) {
+		return -1
+	}
+	return idx
+}
+
+// handleWheel scrolls the diff a few lines per notch, the shape people expect
+// from a pager.
+func (m *Model) handleWheel(e tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	const step = 3
+	switch e.Button {
+	case tea.MouseWheelUp:
+		m.moveTo(m.cur - step)
+	case tea.MouseWheelDown:
+		m.moveTo(m.cur + step)
 	}
 	return m, nil
 }
@@ -215,13 +341,13 @@ func (m *Model) handleMarkKey(key string) {
 	case "D":
 		m.markWholeFile(file, false)
 	case "w":
-		hunks, files := m.marks.total()
-		if hunks == 0 {
+		if hunks, _ := m.marks.total(); hunks == 0 {
 			m.msg = "nothing marked — space or a to mark a hunk"
 			return
 		}
-		m.msg = fmt.Sprintf("stage %s in %s?  y / n", plural(hunks, "hunk"), plural(files, "file"))
-		m.confirm = true
+		m.stage()
+	case "u":
+		m.undo()
 	}
 }
 
@@ -249,26 +375,40 @@ func (m *Model) markWholeFile(file int, on bool) {
 	}
 }
 
-func (m *Model) handleConfirm(key string) (tea.Model, tea.Cmd) {
-	m.confirm = false
-
-	if key != "y" && key != "Y" {
-		m.msg = "cancelled — nothing was staged"
-		return m, nil
-	}
-
+// stage writes the marked hunks straight to the index — no confirmation, since
+// nothing here touches the working tree and "u" takes it right back out. The
+// staged hunks then drop off the diff, freeing the screen for what is left.
+func (m *Model) stage() {
 	result, err := m.stageMarked()
 	if err != nil {
 		// Keep the marks: the user can fix the problem and try again.
 		m.msg = "staging failed: " + firstLine(err.Error())
-		return m, nil
+		return
 	}
 	if err := m.reload(); err != nil {
 		m.msg = result + " (could not re-read the working tree: " + firstLine(err.Error()) + ")"
-		return m, nil
+		return
 	}
-	m.msg = result + " — undo with: git restore --staged ."
-	return m, nil
+	m.msg = result + "  ·  u to undo"
+}
+
+// undo reverses the most recent stage, putting those changes back into the
+// working tree exactly as they were before w.
+func (m *Model) undo() {
+	if m.lastPatch == "" && len(m.lastWhole) == 0 {
+		m.msg = "nothing to undo"
+		return
+	}
+	if err := m.unstageLast(); err != nil {
+		m.msg = "undo failed: " + firstLine(err.Error())
+		return
+	}
+	m.lastPatch, m.lastWhole = "", nil
+	if err := m.reload(); err != nil {
+		m.msg = "undone (could not re-read the working tree: " + firstLine(err.Error()) + ")"
+		return
+	}
+	m.msg = "undone — back to unstaged"
 }
 
 func firstLine(s string) string {
@@ -289,6 +429,9 @@ func (m *Model) moveTo(row int) {
 }
 
 func (m *Model) ensureVisible() {
+	// The viewport is scoped to the current file: only its rows are ever shown,
+	// so scrolling can never mix two files on screen.
+	lo, hi := m.fileSpan(m.cur)
 	h := m.bodyHeight()
 	if m.cur < m.top {
 		m.top = m.cur
@@ -296,11 +439,51 @@ func (m *Model) ensureVisible() {
 	if m.cur >= m.top+h {
 		m.top = m.cur - h + 1
 	}
-	maxTop := len(m.view.Rows) - h
-	if maxTop < 0 {
-		maxTop = 0
+	maxTop := hi - h
+	if maxTop < lo {
+		maxTop = lo
 	}
-	m.top = clamp(m.top, 0, maxTop)
+	m.top = clamp(m.top, lo, maxTop)
+}
+
+// fileSpan is the [lo, hi) row range of the file that owns row. Rows outside it
+// belong to other files and are never drawn while this one is current.
+func (m *Model) fileSpan(row int) (lo, hi int) {
+	if len(m.view.Rows) == 0 {
+		return 0, 0
+	}
+	if row >= len(m.view.Rows) {
+		row = len(m.view.Rows) - 1
+	}
+	f := m.view.Rows[row].FileIdx
+	lo = m.view.FileRows[f]
+	if f+1 < len(m.view.FileRows) {
+		hi = m.view.FileRows[f+1]
+	} else {
+		hi = len(m.view.Rows)
+	}
+	return lo, hi
+}
+
+// currentHunkSpan is the [lo, hi) row range of the hunk under the cursor, or
+// (-1, -1) when the cursor is not on a hunk (a file header or a hunkless file).
+func (m *Model) currentHunkSpan() (lo, hi int) {
+	file, hunk := m.currentTarget()
+	if hunk == wholeFile || m.cur >= len(m.view.Rows) {
+		return -1, -1
+	}
+	match := func(i int) bool {
+		r := m.view.Rows[i]
+		return r.FileIdx == file && r.HunkIdx == hunk
+	}
+	lo, hi = m.cur, m.cur+1
+	for lo-1 >= 0 && match(lo-1) {
+		lo--
+	}
+	for hi < len(m.view.Rows) && match(hi) {
+		hi++
+	}
+	return lo, hi
 }
 
 // rebuildIfNeeded re-flattens the diff when the split/unified choice changes,
@@ -328,6 +511,9 @@ func (m *Model) rebuildIfNeeded() {
 func (m *Model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	// Cell-motion mouse tracking delivers clicks and wheel events so the sidebar
+	// and status-bar options work by pointer, not only by keystroke.
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
@@ -335,10 +521,18 @@ func (m *Model) render() string {
 	if m.width == 0 || m.height == 0 {
 		return "" // no size yet; the first WindowSizeMsg is on its way
 	}
-	if m.showHelp {
-		return m.renderHelp()
-	}
 
+	screen := m.renderScreen()
+	if m.showHelp {
+		// The help is a modal: the diff stays visible behind a centered box.
+		return m.overlay(screen, m.renderHelp())
+	}
+	return screen
+}
+
+// renderScreen draws the diff, sidebar, and status bar — the whole screen
+// except any modal floating on top of it.
+func (m *Model) renderScreen() string {
 	body := m.renderBody()
 	side := m.renderSidebar()
 
@@ -354,6 +548,23 @@ func (m *Model) render() string {
 	return strings.Join(lines, "\n")
 }
 
+// overlay floats box in the center of base, compositing so the base screen
+// shows through around it.
+func (m *Model) overlay(base, box string) string {
+	x := (m.width - lipgloss.Width(box)) / 2
+	y := (m.height - lipgloss.Height(box)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return lipgloss.NewCompositor(
+		lipgloss.NewLayer(base),
+		lipgloss.NewLayer(box).X(x).Y(y).Z(1),
+	).Render()
+}
+
 // renderBody renders exactly the visible window of rows. Everything off screen
 // costs nothing, which is what keeps a 20k-line diff responsive.
 func (m *Model) renderBody() []string {
@@ -362,30 +573,63 @@ func (m *Model) renderBody() []string {
 	w := m.contentWidth() - 1
 	out := make([]string, 0, m.bodyHeight())
 
+	// Only the current file's rows are drawn; anything past its end is blank,
+	// even when that leaves empty space, so files never mix on screen.
+	_, hi := m.fileSpan(m.cur)
+	hlo, hhi := m.currentHunkSpan()
 	for i := 0; i < m.bodyHeight(); i++ {
 		row := m.top + i
-		if row >= len(m.view.Rows) {
+		if row >= hi || row >= len(m.view.Rows) {
 			out = append(out, m.st.base.Render(strings.Repeat(" ", w+1)))
 			continue
 		}
-		out = append(out, m.cursorMark(row)+m.renderRow(m.view.Rows[row], w))
+		focus := hlo <= row && row < hhi
+		out = append(out, m.railMark(row, hlo, hhi)+m.renderRow(m.view.Rows[row], w, focus))
 	}
 	return out
 }
 
-func (m *Model) cursorMark(row int) string {
+// railMark draws the left-margin column for a row: the cursor bar on the cursor
+// row, a thin accent bar down the active hunk, and a green bar down any marked
+// hunk so what will be staged is visible at a glance. Green always means marked.
+func (m *Model) railMark(row, hlo, hhi int) string {
 	if row == m.cur {
 		return m.st.cursor.Render("▌")
 	}
-	return m.st.base.Render(" ")
+	current := hlo <= row && row < hhi
+	marked := m.rowMarked(row)
+
+	switch {
+	case current && marked:
+		return m.st.railMarked.Render("▎")
+	case current:
+		return m.st.focusRail.Render("▎")
+	case marked:
+		return m.st.railMarked.Render("▌")
+	default:
+		return m.st.base.Render(" ")
+	}
 }
 
-func (m *Model) renderRow(r Row, w int) string {
+// rowMarked reports whether the hunk a row belongs to is currently marked.
+func (m *Model) rowMarked(row int) bool {
+	if row < 0 || row >= len(m.view.Rows) {
+		return false
+	}
+	r := m.view.Rows[row]
+	return m.marks.has(r.FileIdx, r.HunkIdx)
+}
+
+func (m *Model) renderRow(r Row, w int, focus bool) string {
 	switch r.Kind {
 	case RowFile:
 		return fit(m.st.fileHeader.Render(" "+r.Text), 0, w, m.st.fileHeader)
 	case RowHunk:
-		return fit(m.st.hunkHeader.Render(" "+r.Text), 0, w, m.st.hunkHeader)
+		style := m.st.hunkHeader
+		if focus {
+			style = m.st.focusHeader
+		}
+		return fit(style.Render(" "+r.Text), 0, w, style)
 	case RowNotice:
 		return fit(m.st.notice.Render("   "+r.Text), 0, w, m.st.base)
 	case RowSpacer:
@@ -442,20 +686,42 @@ func (m *Model) renderSidebar() []string {
 			continue
 		}
 		f := m.files[idx]
-		mark := ""
-		if m.staging() {
-			mark = m.marks.state(idx, f).symbol() + " "
-		}
-		label := fmt.Sprintf(" %s%s  +%d -%d",
-			mark, shortPath(f.Path(), sidebarWidth-10-len(mark)), f.Added, f.Removed)
-
 		style := m.st.sidebar
 		if idx == cur {
 			style = m.st.sidebarSel
 		}
-		out = append(out, fit(style.Render(label), 0, sidebarWidth, style))
+
+		if !m.staging() {
+			label := fmt.Sprintf(" %s  +%d -%d",
+				shortPath(f.Path(), sidebarWidth-10), f.Added, f.Removed)
+			out = append(out, fit(style.Render(label), 0, sidebarWidth, style))
+			continue
+		}
+
+		symbol, symStyle := m.fileGlyph(idx, f, style)
+		rest := fmt.Sprintf("%s  +%d -%d", shortPath(f.Path(), sidebarWidth-12), f.Added, f.Removed)
+		line := style.Render(" ") + symStyle.Render(symbol) + style.Render(" "+rest)
+		out = append(out, fit(line, 0, sidebarWidth, style))
 	}
 	return out
+}
+
+// fileGlyph is the sidebar symbol for a file and the style to draw it in.
+// A pending selection shows the mark symbol; otherwise a staged file shows a
+// check — green when fully staged, gray when only partly.
+func (m *Model) fileGlyph(idx int, f diff.File, base lipgloss.Style) (string, lipgloss.Style) {
+	if m.marks.inFile(idx) > 0 {
+		return m.marks.state(idx, f).symbol(), base
+	}
+	path := f.Path()
+	switch {
+	case m.staged[path] && !m.unstaged[path]:
+		return "✓", base.Foreground(m.st.stagedFg)
+	case m.staged[path]:
+		return "✓", base.Foreground(m.st.partialFg)
+	default:
+		return "·", base
+	}
 }
 
 // shortPath trims a path from the left, keeping the filename, which is the part
@@ -468,6 +734,9 @@ func shortPath(p string, w int) string {
 }
 
 func (m *Model) renderStatus() string {
+	// No hints are clickable unless the option row below actually draws them.
+	m.hints = nil
+
 	// A message — a confirmation prompt, or the result of staging — replaces the
 	// status line while it is relevant.
 	if m.msg != "" {
@@ -490,18 +759,34 @@ func (m *Model) renderStatus() string {
 
 	left := fmt.Sprintf(" %s  +%d -%d  ·  file %d/%d  ·  %s",
 		f.Path(), f.Added, f.Removed, fileIdx+1, len(m.files), mode)
-	right := "n/p hunk  ]/[ file  s split  ? help  q quit "
+	opts := []hintZone{
+		{key: "n"}, {key: "]"}, {key: "s"}, {key: "?"}, {key: "q"},
+	}
+	labels := []string{"n/p hunk", "]/[ file", "s split", "? help", "q quit"}
 	if m.staging() {
 		if hunks, files := m.marks.total(); hunks > 0 {
 			left += fmt.Sprintf("  ·  %s marked in %s", plural(hunks, "hunk"), plural(files, "file"))
 		}
-		right = "space mark  A file  w stage  ? help  q quit "
+		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "?"}, {key: "q"}}
+		labels = []string{"space mark", "A file", "w stage", "u undo", "? help", "q quit"}
 	}
 
+	right := strings.Join(labels, "  ") + " "
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		return fit(m.st.statusbar.Render(left), 0, m.width, m.st.statusbar)
 	}
+
+	// Record where each label lands so a click there runs its key. The right
+	// block starts after the left text and the gap that pushes it to the edge.
+	x := lipgloss.Width(left) + gap
+	for i, label := range labels {
+		opts[i].x0 = x
+		opts[i].x1 = x + lipgloss.Width(label) - 1
+		x += lipgloss.Width(label) + 2 // labels are joined by two spaces
+	}
+	m.hints = opts
+
 	return m.st.statusbar.Render(left + strings.Repeat(" ", gap) + right)
 }
 
@@ -517,27 +802,31 @@ func (m *Model) renderHelp() string {
 		{"b", "toggle the file sidebar"},
 		{"?", "this help"},
 		{"q", "quit"},
+		{"", ""},
+		{"mouse", "click a file, row, or status-bar option; wheel scrolls"},
 	}
 	if m.staging() {
 		rows = append(rows,
 			[2]string{"", ""},
-			[2]string{"space", "mark / unmark this hunk"},
+			[2]string{"space", "mark / unmark the current hunk"},
 			[2]string{"a / d", "mark / unmark, then jump to the next hunk"},
 			[2]string{"A / D", "mark / unmark every hunk in this file"},
-			[2]string{"w", "stage what is marked (asks first)"},
+			[2]string{"w", "stage what is marked"},
+			[2]string{"u", "undo the last stage"},
 		)
 	}
 
-	lines := []string{m.st.fileHeader.Render(" hunk — keys"), ""}
+	lines := []string{m.st.modalTitle.Render("hunk — keys"), ""}
 	for _, r := range rows {
-		lines = append(lines, m.st.help.Render(fmt.Sprintf("  %-18s %s", r[0], r[1])))
+		if r[0] == "" && r[1] == "" {
+			lines = append(lines, m.st.base.Render(""))
+			continue
+		}
+		lines = append(lines, m.st.help.Render(fmt.Sprintf("%-18s %s", r[0], r[1])))
 	}
-	lines = append(lines, "", m.st.notice.Render("  press any key to go back"))
+	lines = append(lines, "", m.st.notice.Render("press any key to close"))
 
-	for len(lines) < m.height {
-		lines = append(lines, m.st.base.Render(strings.Repeat(" ", m.width)))
-	}
-	return strings.Join(lines[:m.height], "\n")
+	return m.st.modal.Render(strings.Join(lines, "\n"))
 }
 
 func clamp(v, lo, hi int) int {

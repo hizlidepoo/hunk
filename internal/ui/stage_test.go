@@ -196,17 +196,10 @@ func TestStagingOneMarkedHunk(t *testing.T) {
 		t.Fatalf("space marked %d hunks, want 1", hunks)
 	}
 
+	// w stages immediately — no confirmation step.
 	m.handleKey(keyPress("w"))
-	if !m.confirm {
-		t.Fatal("w should ask before writing to the index")
-	}
-	if !strings.Contains(m.msg, "stage 1 hunk") {
-		t.Errorf("confirmation prompt = %q", m.msg)
-	}
-
-	m.handleKey(keyPress("y"))
-	if m.confirm {
-		t.Error("still waiting for confirmation after answering")
+	if !strings.Contains(m.msg, "staged 1 hunk") {
+		t.Errorf("stage message = %q", m.msg)
 	}
 
 	cached := gitOut(t, repo, "diff", "--cached")
@@ -240,7 +233,6 @@ func TestStagingReloadsAndClearsMarks(t *testing.T) {
 	m.moveTo(m.view.HunkRows[0])
 	m.handleKey(keyPress(" "))
 	m.handleKey(keyPress("w"))
-	m.handleKey(keyPress("y"))
 
 	if hunks, _ := m.marks.total(); hunks != 0 {
 		t.Errorf("%d marks survived staging", hunks)
@@ -248,31 +240,119 @@ func TestStagingReloadsAndClearsMarks(t *testing.T) {
 	if len(m.files) != 1 || len(m.files[0].Hunks) != 1 {
 		t.Errorf("after staging one of two hunks, one should remain; got %d files", len(m.files))
 	}
-	if !strings.Contains(m.msg, "git restore --staged") {
-		t.Errorf("the result should say how to undo it, got %q", m.msg)
+	if !strings.Contains(m.msg, "u to undo") {
+		t.Errorf("the result should mention undo, got %q", m.msg)
 	}
 }
 
-func TestCancellingStagesNothing(t *testing.T) {
+func TestFullyStagedFileStaysWithGreenCheck(t *testing.T) {
 	base := lines(20)
-	m, repo := gitModel(t,
+	m, _ := gitModel(t,
 		map[string]string{"a.txt": base},
 		map[string]string{"a.txt": replaceLine(base, 3, "CHANGED")},
 	)
 
+	// Approve the whole file, then stage it.
+	m.handleKey(keyPress("A"))
+	m.handleKey(keyPress("w"))
+
+	// The file has no unstaged changes left, yet it must not vanish.
+	if len(m.files) != 1 || m.files[0].Path() != "a.txt" {
+		t.Fatalf("fully staged file dropped off the list: %v", m.files)
+	}
+	if !m.staged["a.txt"] || m.unstaged["a.txt"] {
+		t.Fatalf("git state wrong: staged=%v unstaged=%v", m.staged, m.unstaged)
+	}
+	symbol, style := m.fileGlyph(0, m.files[0], m.st.sidebar)
+	if symbol != "✓" {
+		t.Errorf("glyph = %q, want a check", symbol)
+	}
+	if style.GetForeground() != m.st.stagedFg {
+		t.Errorf("a fully staged file's check should be green")
+	}
+}
+
+func TestPartiallyStagedFileShowsGrayCheck(t *testing.T) {
+	base := lines(60)
+	edited := replaceLine(base, 5, "FIRST")
+	edited = replaceLine(edited, 30, "SECOND")
+
+	m, _ := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": edited})
+
+	// Stage only the first of two hunks.
 	m.moveTo(m.view.HunkRows[0])
 	m.handleKey(keyPress(" "))
 	m.handleKey(keyPress("w"))
-	m.handleKey(keyPress("n"))
 
+	if !m.staged["a.txt"] || !m.unstaged["a.txt"] {
+		t.Fatalf("expected both staged and unstaged content: staged=%v unstaged=%v", m.staged, m.unstaged)
+	}
+	symbol, style := m.fileGlyph(0, m.files[0], m.st.sidebar)
+	if symbol != "✓" {
+		t.Errorf("glyph = %q, want a check", symbol)
+	}
+	if style.GetForeground() != m.st.partialFg {
+		t.Errorf("a partially staged file's check should be gray, not green")
+	}
+}
+
+func TestMarkedHunkShowsGreenRail(t *testing.T) {
+	base := lines(30)
+	edited := replaceLine(base, 5, "FIRST")
+	edited = replaceLine(edited, 25, "SECOND")
+
+	m, _ := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": edited})
+
+	// Mark the first hunk, then move the cursor onto the second one.
+	m.moveTo(m.view.HunkRows[0] + 1)
+	m.handleKey(keyPress(" "))
+	m.moveTo(m.view.HunkRows[1] + 1)
+
+	// A body row inside the marked (now non-current) hunk gets the green bar.
+	row := m.view.HunkRows[0] + 1
+	if row == m.cur {
+		t.Fatal("test setup put the cursor on the row under test")
+	}
+	hlo, hhi := m.currentHunkSpan()
+	if got := m.railMark(row, hlo, hhi); got != m.st.railMarked.Render("▌") {
+		t.Errorf("marked hunk row rail = %q, want the green marked bar", got)
+	}
+}
+
+func TestUndoUnstagesTheLastStage(t *testing.T) {
+	base := lines(60)
+	edited := replaceLine(base, 5, "FIRST")
+	edited = replaceLine(edited, 30, "SECOND")
+
+	m, repo := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": edited})
+
+	// Stage the first hunk, then undo it.
+	m.moveTo(m.view.HunkRows[0])
+	m.handleKey(keyPress(" "))
+	m.handleKey(keyPress("w"))
+	if cached := gitOut(t, repo, "diff", "--cached"); !strings.Contains(cached, "FIRST") {
+		t.Fatalf("w did not stage the hunk:\n%s", cached)
+	}
+	if !strings.Contains(m.msg, "u to undo") {
+		t.Errorf("stage message should mention undo, got %q", m.msg)
+	}
+
+	m.handleKey(keyPress("u"))
 	if cached := gitOut(t, repo, "diff", "--cached"); strings.TrimSpace(cached) != "" {
-		t.Errorf("cancelling still wrote to the index:\n%s", cached)
+		t.Errorf("undo left something staged:\n%s", cached)
 	}
-	if !strings.Contains(m.msg, "cancelled") {
-		t.Errorf("message = %q, want it to say the stage was cancelled", m.msg)
+	if !strings.Contains(m.msg, "undone") {
+		t.Errorf("undo message = %q", m.msg)
 	}
-	if hunks, _ := m.marks.total(); hunks != 1 {
-		t.Error("cancelling should keep the marks so they can be corrected")
+	// Both hunks are unstaged again, so the file shows both.
+	if len(m.files) != 1 || len(m.files[0].Hunks) != 2 {
+		t.Errorf("after undo the file should have both hunks back; got %v", m.files)
+	}
+
+	// A second undo has nothing to reverse.
+	m.handleKey(keyPress("u"))
+	if !strings.Contains(m.msg, "nothing to undo") {
+		t.Errorf("second undo message = %q", m.msg)
 	}
 }
 
@@ -284,9 +364,6 @@ func TestStagingNothingMarkedAsksForAMark(t *testing.T) {
 	)
 
 	m.handleKey(keyPress("w"))
-	if m.confirm {
-		t.Error("w with nothing marked should not prompt to stage")
-	}
 	if !strings.Contains(m.msg, "nothing marked") {
 		t.Errorf("message = %q", m.msg)
 	}
@@ -320,11 +397,8 @@ func TestMarkKeysDoNothingWithoutARepo(t *testing.T) {
 	m := newTestModel(t, sample)
 	screen(t, m, 140, 20)
 
-	for _, k := range []string{" ", "a", "A", "w"} {
+	for _, k := range []string{" ", "a", "A", "w", "u"} {
 		m.handleKey(keyPress(k))
-	}
-	if m.confirm {
-		t.Error("a plain diff should never offer to stage anything")
 	}
 	if m.marks != nil {
 		t.Error("a plain diff should not accumulate marks")

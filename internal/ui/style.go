@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image/color"
 	"strconv"
 	"strings"
 
@@ -18,16 +19,30 @@ const tabWidth = 4
 // styles is a theme turned into the concrete Lip Gloss styles the renderer
 // uses. Building them once per theme keeps the per-row work to string joins.
 type styles struct {
-	base        lipgloss.Style
-	fileHeader  lipgloss.Style
-	hunkHeader  lipgloss.Style
-	notice      lipgloss.Style
-	lineNum     lipgloss.Style
-	gutter      lipgloss.Style
-	statusbar   lipgloss.Style
-	help        lipgloss.Style
-	sidebar     lipgloss.Style
-	sidebarSel  lipgloss.Style
+	base       lipgloss.Style
+	fileHeader lipgloss.Style
+	hunkHeader lipgloss.Style
+	notice     lipgloss.Style
+	lineNum    lipgloss.Style
+	gutter     lipgloss.Style
+	statusbar  lipgloss.Style
+	help       lipgloss.Style
+	sidebar    lipgloss.Style
+	sidebarSel lipgloss.Style
+	modal      lipgloss.Style
+	modalTitle lipgloss.Style
+	// focusRail draws the vertical "current hunk" accent in the left margin;
+	// focusHeader lights up that hunk's @@ line so the active block is obvious.
+	focusRail   lipgloss.Style
+	focusHeader lipgloss.Style
+	// railMarked is the green left-margin bar down a hunk that is marked for
+	// staging.
+	railMarked lipgloss.Style
+
+	// stagedFg / partialFg color the sidebar check: green when a file is fully
+	// staged, gray when only some of it is.
+	stagedFg    color.Color
+	partialFg   color.Color
 	context     lipgloss.Style
 	added       lipgloss.Style
 	removed     lipgloss.Style
@@ -52,6 +67,13 @@ func newStyles(t *theme.Theme) styles {
 		help:        base.Foreground(c(t.UI.Foreground)),
 		sidebar:     base.Foreground(c(t.UI.SidebarFg)),
 		sidebarSel:  lipgloss.NewStyle().Background(c(t.UI.SidebarSelectedBg)).Foreground(c(t.UI.SidebarSelectedFg)),
+		modal:       base.Border(lipgloss.RoundedBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.UI.Border)).Padding(0, 2),
+		modalTitle:  base.Foreground(c(t.UI.FileHeader)).Bold(true),
+		focusRail:   base.Foreground(c(t.UI.HunkHeader)).Bold(true),
+		focusHeader: base.Background(c(t.UI.HunkHeader)).Foreground(c(t.UI.Background)).Bold(true),
+		railMarked:  base.Foreground(c(t.Diff.AddedFg)).Bold(true),
+		stagedFg:    c(t.Diff.AddedFg),
+		partialFg:   c(t.UI.LineNumber),
 		context:     base.Foreground(c(t.Diff.ContextFg)),
 		added:       base.Background(c(t.Diff.AddedBg)).Foreground(c(t.Diff.AddedFg)),
 		removed:     base.Background(c(t.Diff.RemovedBg)).Foreground(c(t.Diff.RemovedFg)),
