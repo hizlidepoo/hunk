@@ -298,3 +298,34 @@ func col(line string, r rune) int {
 	}
 	return last
 }
+
+// Only one file is on screen at a time, so scrolling stops at that file's end
+// instead of dragging the view into the next one. ] and [ change file.
+func TestScrollingStaysInsideTheCurrentFile(t *testing.T) {
+	m := newTestModel(t, sample)
+	screen(t, m, 140, 20)
+
+	_, hi := m.fileSpan(m.cur)
+	for i := 0; i < 50; i++ {
+		m.handleKey(keyPress("j"))
+	}
+	if m.cur != hi-1 {
+		t.Errorf("scrolling down left the cursor at %d, want the file's last row %d", m.cur, hi-1)
+	}
+	if file := m.view.Rows[m.cur].FileIdx; file != 0 {
+		t.Errorf("scrolling ran into file %d, want to stay on 0", file)
+	}
+
+	m.handleKey(keyPress("]"))
+	if file := m.view.Rows[m.cur].FileIdx; file != 1 {
+		t.Fatalf("] did not change file, cursor is on file %d", file)
+	}
+
+	lo, _ := m.fileSpan(m.cur)
+	for i := 0; i < 50; i++ {
+		m.handleKey(keyPress("k"))
+	}
+	if m.cur != lo {
+		t.Errorf("scrolling up left the cursor at %d, want the file's first row %d", m.cur, lo)
+	}
+}

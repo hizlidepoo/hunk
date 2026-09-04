@@ -77,7 +77,7 @@ In working-tree review mode you also get:
 
 | Key | Action |
 |---|---|
-| `space` | mark / unmark this hunk |
+| `space` | mark this hunk and move to the next one in the file |
 | `a` / `d` | mark / unmark, then jump to the next hunk |
 | `A` / `D` | mark / unmark every hunk in this file |
 | `w` | stage what is marked (asks first) |

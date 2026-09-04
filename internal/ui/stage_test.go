@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -442,5 +443,83 @@ func TestStatusBarShowsMarkCount(t *testing.T) {
 	out := strings.Join(screen(t, m, 140, 20), "\n")
 	if !strings.Contains(out, "1 hunk marked") {
 		t.Errorf("status bar does not show the mark count:\n%s", out)
+	}
+}
+
+// space approves a hunk and moves to the next one in the same file, and stops
+// at the file's last hunk rather than jumping into the next file.
+func TestSpaceAdvancesWithinTheFile(t *testing.T) {
+	base := lines(40)
+	twoHunks := replaceLine(replaceLine(base, 5, "ONE"), 35, "TWO")
+	m, _ := gitModel(t, map[string]string{"a.txt": base, "b.txt": base},
+		map[string]string{"a.txt": twoHunks, "b.txt": replaceLine(base, 5, "OTHER")})
+	press := pacedSpace(m)
+
+	m.moveTo(m.view.HunkRows[0] + 1)
+	press()
+	if got := m.cur; got != m.view.HunkRows[1] {
+		t.Fatalf("space left the cursor at row %d, want the next hunk at %d", got, m.view.HunkRows[1])
+	}
+
+	// The file's last hunk: marking it keeps the cursor in this file.
+	press()
+	if file := m.view.Rows[m.cur].FileIdx; file != 0 {
+		t.Errorf("space on the last hunk jumped to file %d, want to stay on 0", file)
+	}
+
+	// Unmarking stays put, so you can see what you took back.
+	at := m.cur
+	press()
+	if m.cur != at {
+		t.Errorf("unmarking moved the cursor from %d to %d", at, m.cur)
+	}
+	if hunks, _ := m.marks.total(); hunks != 1 {
+		t.Errorf("%d hunks marked after mark, mark, unmark, want 1", hunks)
+	}
+}
+
+// A held space bar repeats at machine speed. Because marking moves the cursor
+// on, every repeat would land on a fresh hunk and approve the whole file.
+func TestHeldSpaceMarksOnlyOneHunk(t *testing.T) {
+	base := lines(60)
+	edited := replaceLine(replaceLine(replaceLine(base, 5, "A"), 30, "B"), 55, "C")
+	m, _ := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": edited})
+
+	now := time.Now()
+	m.clock = func() time.Time { return now }
+
+	m.moveTo(m.view.HunkRows[0] + 1)
+	for i := 0; i < 8; i++ { // one press, eight repeats 30ms apart
+		m.handleKey(keyPress(" "))
+		now = now.Add(30 * time.Millisecond)
+	}
+	if hunks, _ := m.marks.total(); hunks != 1 {
+		t.Errorf("a held space bar marked %d hunks, want 1", hunks)
+	}
+
+	// The same hunk is never blocked: taking the mark back is a decision, not
+	// a repeat, however fast it comes.
+	m.moveTo(m.view.HunkRows[0] + 1)
+	m.handleKey(keyPress(" "))
+	if hunks, _ := m.marks.total(); hunks != 0 {
+		t.Errorf("%d hunks still marked after unmarking, want 0", hunks)
+	}
+
+	// Once the repeat window has passed, the next press marks again.
+	now = now.Add(2 * markRepeat)
+	m.handleKey(keyPress(" "))
+	if hunks, _ := m.marks.total(); hunks != 1 {
+		t.Errorf("%d hunks marked after the window passed, want 1", hunks)
+	}
+}
+
+// pacedSpace presses space with enough time between presses that none of them
+// looks like the key repeating.
+func pacedSpace(m *Model) func() {
+	now := time.Now()
+	m.clock = func() time.Time { return now }
+	return func() {
+		m.handleKey(keyPress(" "))
+		now = now.Add(2 * markRepeat)
 	}
 }
