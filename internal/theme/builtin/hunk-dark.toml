@@ -11,21 +11,17 @@ foreground          = "#c0caf5"
 border              = "#3b4261"
 line_number         = "#565f89"
 file_header         = "#7dcfff"
-hunk_header         = "#ffcc00"
-statusbar_fg        = "#1a1b26"
-statusbar_bg        = "#ffcc00"
+accent              = "#ffcc00"
 sidebar_fg          = "#a9b1d6"
-sidebar_selected_fg = "#1a1b26"
-sidebar_selected_bg = "#ffcc00"
 
 [diff]
-added_fg        = "#9ece6a"
-added_bg        = "#1e2b1e"
-removed_fg      = "#f7768e"
-removed_bg      = "#2d1e24"
+added_fg        = "#b6ec7a"
+added_bg        = "#1d3325"
+removed_fg      = "#ff8fa0"
+removed_bg      = "#3a1f27"
 context_fg      = "#a9b1d6"
 
 # Intra-line emphasis: the words that actually changed on a line, painted a
 # shade stronger than the line's own background.
-added_word_bg   = "#3d5a2e"
-removed_word_bg = "#5a2e38"
+added_word_bg   = "#2f6b38"
+removed_word_bg = "#7a2b3c"

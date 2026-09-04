@@ -135,3 +135,54 @@ func TestWatcherSignalsOnChange(t *testing.T) {
 		t.Fatal("watcher never reported the change")
 	}
 }
+
+// A clean tree is a valid place to open hunk: it shows what it is waiting for
+// and fills in once the tree is edited.
+func TestEmptyTreeRendersWaitingThenFillsIn(t *testing.T) {
+	base := lines(20)
+	m, repo := gitModel(t, map[string]string{"a.txt": base}, nil)
+
+	if got := m.renderScreen(); !strings.Contains(got, "watching for edits") {
+		t.Fatalf("a clean tree should say what it is waiting for, got:\n%s", got)
+	}
+
+	writeWorking(t, repo.Dir, "a.txt", replaceLine(base, 5, "EDIT"))
+	m.liveReload()
+
+	if len(m.view.Rows) == 0 {
+		t.Fatal("the first edit should populate the empty viewer")
+	}
+	if got := m.renderScreen(); !strings.Contains(got, "EDIT") {
+		t.Errorf("the new edit is not on screen:\n%s", got)
+	}
+}
+
+// A reload used to yank the cursor back to the top of its hunk, which made
+// scrolling through a long change impossible while an agent kept writing: every
+// line you scrolled down was undone by the next reload.
+func TestLiveReloadKeepsTheReadingPosition(t *testing.T) {
+	base := lines(200)
+	edited := base
+	for i := 10; i < 60; i++ {
+		edited = replaceLine(edited, i, "CHANGED")
+	}
+	m, repo := gitModel(t, map[string]string{"a.txt": base, "b.txt": base},
+		map[string]string{"a.txt": edited, "b.txt": replaceLine(base, 5, "X")})
+
+	for i := 0; i < 40; i++ {
+		m.handleKey(keyPress("j"))
+	}
+	cur, top := m.cur, m.top
+	if cur == 0 || top == 0 {
+		t.Fatalf("the fixture did not scroll: cur=%d top=%d", cur, top)
+	}
+
+	// Something else in the tree changes, which is what live-follow reacts to.
+	writeWorking(t, repo.Dir, "b.txt", replaceLine(base, 90, "Y"))
+	m.liveReload()
+
+	if m.cur != cur || m.top != top {
+		t.Errorf("reload moved the view to cur=%d top=%d, want cur=%d top=%d",
+			m.cur, m.top, cur, top)
+	}
+}

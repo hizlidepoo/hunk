@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -12,6 +13,13 @@ import (
 	"github.com/wmarquardt/hunk/internal/git"
 	"github.com/wmarquardt/hunk/internal/theme"
 )
+
+// markRepeat is how long after marking one hunk a space press on a *different*
+// hunk is read as the key repeating rather than as a second decision. Marking
+// moves the cursor on, so without this a held space bar walks the file and
+// marks all of it. Pressing space again on the same hunk is never blocked, so
+// taking a mark straight back off still works.
+const markRepeat = time.Second
 
 const (
 	sidebarWidth = 28
@@ -66,6 +74,12 @@ type Model struct {
 	watch *watcher
 	live  bool
 
+	// clock, lastMark and lastMarkAt tell a held space bar from a deliberate
+	// second press. clock is a field so tests do not have to sleep.
+	clock      func() time.Time
+	lastMark   [2]int
+	lastMarkAt time.Time
+
 	// hints are the clickable option zones on the status bar, rebuilt on every
 	// render so mouse hit-testing matches exactly what is on screen.
 	hints []hintZone
@@ -86,9 +100,17 @@ func New(files []diff.File, t *theme.Theme) *Model {
 		wantSplit:   true,
 		wantSidebar: true,
 		builtSplit:  true,
+		clock:       time.Now,
+		lastMark:    [2]int{-1, -1},
 	}
-	m.view = Build(files, true)
+	m.rebuildView()
 	return m
+}
+
+// rebuildView re-flattens the files into rows. Everything that changes the diff
+// or the layout goes through here.
+func (m *Model) rebuildView() {
+	m.view = Build(m.files, m.builtSplit)
 }
 
 // NewGit is New for a working tree hunk can stage into. It also starts
@@ -237,13 +259,13 @@ func (m *Model) command(key string) tea.Cmd {
 		return tea.Quit
 
 	case "j", "down":
-		m.moveTo(m.cur + 1)
+		m.step(1)
 	case "k", "up":
-		m.moveTo(m.cur - 1)
+		m.step(-1)
 	case "ctrl+d", "pgdown":
-		m.moveTo(m.cur + m.bodyHeight()/2)
+		m.step(m.bodyHeight() / 2)
 	case "ctrl+u", "pgup":
-		m.moveTo(m.cur - m.bodyHeight()/2)
+		m.step(-m.bodyHeight() / 2)
 	case "g", "home":
 		m.moveTo(0)
 	case "G", "end":
@@ -370,12 +392,12 @@ func (m *Model) sidebarFileAt(y int) int {
 // handleWheel scrolls the diff a few lines per notch, the shape people expect
 // from a pager.
 func (m *Model) handleWheel(e tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
-	const step = 3
+	const rows = 3
 	switch e.Button {
 	case tea.MouseWheelUp:
-		m.moveTo(m.cur - step)
+		m.step(-rows)
 	case tea.MouseWheelDown:
-		m.moveTo(m.cur + step)
+		m.step(rows)
 	}
 	return m, nil
 }
@@ -386,7 +408,17 @@ func (m *Model) handleMarkKey(key string) {
 
 	switch key {
 	case "space":
-		m.marks.set(file, hunk, !m.marks.has(file, hunk))
+		if m.heldSpace(file, hunk) {
+			return
+		}
+		// Marking moves on to the next hunk in this file: approving is a run of
+		// decisions, and stopping on each one you just made costs a keystroke.
+		// Unmarking stays put, so you can see what you took back.
+		on := !m.marks.has(file, hunk)
+		m.marks.set(file, hunk, on)
+		if on {
+			m.nextHunkInFile(file)
+		}
 	case "a":
 		m.marks.set(file, hunk, true)
 		m.moveTo(NextIndex(m.view.HunkRows, m.cur))
@@ -408,49 +440,111 @@ func (m *Model) handleMarkKey(key string) {
 	}
 }
 
-// cursorIdentity describes where the cursor sits by content, not row number, so
-// its place can be found again after the view is rebuilt. key is empty when the
-// cursor is on a file header rather than a hunk.
-func (m *Model) cursorIdentity() (path, key string) {
+// heldSpace reports whether this space press is the key repeating: it landed on
+// a hunk the cursor was moved to by the previous press, too soon after it to be
+// a decision. A press on the hunk just marked is always a decision, so undoing
+// a mark stays instant.
+func (m *Model) heldSpace(file, hunk int) bool {
+	now := m.clock()
+	target := [2]int{file, hunk}
+	if target != m.lastMark && now.Sub(m.lastMarkAt) < markRepeat {
+		return true
+	}
+	m.lastMark, m.lastMarkAt = target, now
+	return false
+}
+
+// nextHunkInFile puts the cursor on this file's next hunk, or leaves it where
+// it is when this was the file's last one — jumping into the next file would
+// take the eye somewhere it did not ask to go.
+func (m *Model) nextHunkInFile(file int) {
+	for _, row := range m.view.HunkRows {
+		if row > m.cur && m.view.Rows[row].FileIdx == file {
+			m.moveTo(row)
+			return
+		}
+	}
+}
+
+// place describes where the cursor sits by content, not row number, so it can
+// be found again after the view is rebuilt. key is empty when the cursor is on
+// a file header rather than a hunk; offset is how far into that hunk the cursor
+// had scrolled, and screen how far down the window it was sitting, so a reload
+// puts the same lines back under the same eyes instead of yanking the view up
+// to the hunk's first row.
+type place struct {
+	path   string
+	key    string
+	offset int
+	screen int
+}
+
+func (m *Model) cursorIdentity() place {
 	if m.cur >= len(m.view.Rows) {
-		return "", ""
+		return place{}
 	}
 	r := m.view.Rows[m.cur]
 	if r.FileIdx >= len(m.files) {
-		return "", ""
+		return place{}
 	}
 	f := m.files[r.FileIdx]
+	p := place{path: f.Path(), screen: m.cur - m.top}
 	if r.HunkIdx >= 0 && r.HunkIdx < len(f.Hunks) {
-		key = f.Hunks[r.HunkIdx].Key()
+		p.key = f.Hunks[r.HunkIdx].Key()
+		lo, _ := m.currentHunkSpan()
+		if lo >= 0 {
+			p.offset = m.cur - lo
+		}
 	}
-	return f.Path(), key
+	return p
 }
 
-// restoreCursor puts the cursor back on the same file and hunk after a rebuild,
-// falling back to the file's header, then to a clamped position, when the exact
-// hunk is gone.
-func (m *Model) restoreCursor(path, key string) {
-	fi := m.fileIndexByPath(path)
+// restoreCursor puts the cursor back where it was reading: same file, same
+// hunk, same distance into that hunk, and the same distance down the window.
+func (m *Model) restoreCursor(p place) {
+	fi := m.fileIndexByPath(p.path)
 	if fi < 0 {
 		m.moveTo(m.cur) // path gone; just clamp and stay near where we were
 		return
 	}
+
 	target := m.view.FileRows[fi]
-	if key != "" {
+	if p.key != "" {
 		globalHunk := 0
 		for i := 0; i < fi; i++ {
 			globalHunk += len(m.files[i].Hunks)
 		}
 		for hi, h := range m.files[fi].Hunks {
-			if h.Key() == key {
+			if h.Key() == p.key {
 				if g := globalHunk + hi; g < len(m.view.HunkRows) {
-					target = m.view.HunkRows[g]
+					target = m.view.HunkRows[g] + p.offset
+					// The hunk may have shrunk under the offset; never walk out
+					// of it into the next one.
+					if end := hunkEnd(m.view, m.view.HunkRows[g]); target >= end {
+						target = end - 1
+					}
 				}
 				break
 			}
 		}
 	}
+
 	m.moveTo(target)
+	if p.screen > 0 {
+		m.top = m.cur - p.screen
+		m.ensureVisible()
+	}
+}
+
+// hunkEnd is the row after the last one belonging to the hunk that starts at
+// row start.
+func hunkEnd(v *View, start int) int {
+	r := v.Rows[start]
+	end := start + 1
+	for end < len(v.Rows) && v.Rows[end].FileIdx == r.FileIdx && v.Rows[end].HunkIdx == r.HunkIdx {
+		end++
+	}
+	return end
 }
 
 func (m *Model) fileIndexByPath(path string) int {
@@ -527,6 +621,14 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// step scrolls within the current file. Only one file is on screen at a time,
+// so running off its end should stop at the end rather than drag the view into
+// a file the reader did not ask for — ] and [ are how you change file.
+func (m *Model) step(delta int) {
+	lo, hi := m.fileSpan(m.cur)
+	m.moveTo(clamp(m.cur+delta, lo, hi-1))
 }
 
 // moveTo puts the cursor on a row, clamped to the diff, and scrolls to it.
@@ -609,7 +711,7 @@ func (m *Model) rebuildIfNeeded() {
 	}
 
 	m.builtSplit = m.split()
-	m.view = Build(m.files, m.builtSplit)
+	m.rebuildView()
 
 	m.cur = 0
 	if file < len(m.view.FileRows) {
@@ -684,6 +786,10 @@ func (m *Model) renderBody() []string {
 	w := m.contentWidth() - 1
 	out := make([]string, 0, m.bodyHeight())
 
+	if len(m.view.Rows) == 0 {
+		return m.renderEmpty(w + 1)
+	}
+
 	// Only the current file's rows are drawn; anything past its end is blank,
 	// even when that leaves empty space, so files never mix on screen.
 	_, hi := m.fileSpan(m.cur)
@@ -696,6 +802,37 @@ func (m *Model) renderBody() []string {
 		}
 		focus := hlo <= row && row < hhi
 		out = append(out, m.railMark(row, hlo, hhi)+m.renderRow(m.view.Rows[row], w, focus))
+	}
+	return out
+}
+
+// renderEmpty fills the body when there is no diff to show. In a repo that is
+// not "done" but "not yet": hunk keeps following the tree, so the message says
+// what it is waiting for.
+func (m *Model) renderEmpty(w int) []string {
+	msg := "no changes to show"
+	switch {
+	case m.staging() && m.live:
+		msg = "nothing to stage yet — watching for edits"
+	case m.staging() && m.watch != nil:
+		msg = "nothing to stage — following is paused, press f to resume"
+	case m.staging():
+		msg = "nothing to stage — the working tree is clean"
+	}
+
+	blank := m.st.base.Render(strings.Repeat(" ", w))
+	out := make([]string, 0, m.bodyHeight())
+	mid := m.bodyHeight() / 3
+	for i := 0; i < m.bodyHeight(); i++ {
+		if i != mid {
+			out = append(out, blank)
+			continue
+		}
+		pad := (w - lipgloss.Width(msg)) / 2
+		if pad < 0 {
+			pad = 0
+		}
+		out = append(out, fit(m.st.base.Render(strings.Repeat(" ", pad))+m.st.notice.Render(msg), 0, w, m.st.base))
 	}
 	return out
 }
@@ -755,14 +892,101 @@ func (m *Model) renderRow(r Row, w int, focus bool) string {
 		return m.st.base.Render(strings.Repeat(" ", w))
 	}
 
+	// The two outermost columns belong to the change block's outline. They are
+	// reserved on every row, boxed or not, or text would shift sideways as the
+	// eye moves from a context line into a change.
+	inner := w - 2
+	lead := m.st.box.Render(edgeGlyph(r.BoxLeft, true))
+	trail := m.st.box.Render(edgeGlyph(r.BoxRight, false))
+
 	if !m.builtSplit {
-		return m.renderUnifiedRow(r, w)
+		return lead + m.paneOr(r.BoxLeft, inner, func() string {
+			return m.renderUnifiedRow(r, inner)
+		}) + trail
 	}
 
-	half := (w - 1) / 2
-	left := m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll)
-	right := m.st.renderSide(r.Right, "", numWidth, w-half-1-numWidth-1, m.hscroll)
-	return left + m.st.gutter.Render("│") + right
+	half := (inner - 1) / 2
+	left := m.paneOr(r.BoxLeft, half, func() string {
+		return m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll)
+	})
+	right := m.paneOr(r.BoxRight, inner-half-1, func() string {
+		return m.st.renderSide(r.Right, "", numWidth, inner-half-1-numWidth-1, m.hscroll)
+	})
+	return lead + left + m.divider(r) + right + trail
+}
+
+// paneOr draws a pane's share of a rule row, or the pane's normal contents when
+// the outline is not opening or closing here.
+func (m *Model) paneOr(p BoxPart, width int, draw func() string) string {
+	if p == BoxTop || p == BoxBottom {
+		return m.st.box.Render(strings.Repeat(lipgloss.RoundedBorder().Top, width))
+	}
+	return draw()
+}
+
+// edgeGlyph is the outline's outer column for one pane: a corner where the box
+// opens or closes, its side while it is open, nothing when the pane is outside.
+func edgeGlyph(p BoxPart, left bool) string {
+	b := lipgloss.RoundedBorder()
+	switch p {
+	case BoxTop:
+		if left {
+			return b.TopLeft
+		}
+		return b.TopRight
+	case BoxMid:
+		return b.Left
+	case BoxBottom:
+		if left {
+			return b.BottomLeft
+		}
+		return b.BottomRight
+	default:
+		return " "
+	}
+}
+
+// divider draws the column between the panes. Inside a block there is no
+// divider: the outline is one shape, so the seam carries whatever the outline
+// is doing on that row — the rule sweeping across, a corner where a box that
+// covers only one pane turns, the turn down into the taller pane, that pane's
+// wall, or the corner where it finally closes.
+func (m *Model) divider(r Row) string {
+	b := lipgloss.RoundedBorder()
+	l, rt := r.BoxLeft, r.BoxRight
+
+	if l == BoxNone && rt == BoxNone {
+		return m.st.gutter.Render("│")
+	}
+	if r.Arrow {
+		// The change reads left to right — old on the left, new on the right —
+		// and the marker says so, floating in the gap inside the outline.
+		return m.st.box.Bold(true).Render("→")
+	}
+
+	glyph := b.Left // one pane is enclosed and the other is not: its wall
+	switch {
+	case l == rt: // both panes do the same thing here
+		switch l {
+		case BoxTop, BoxBottom:
+			glyph = b.Top // one rule sweeping across both panes
+		default:
+			glyph = " " // inside the box, nothing separates the panes
+		}
+	case l == BoxTop:
+		glyph = b.TopRight // a box over the left pane only
+	case rt == BoxTop:
+		glyph = b.TopLeft
+	case l == BoxBottom && rt == BoxNone:
+		glyph = b.BottomRight
+	case rt == BoxBottom && l == BoxNone:
+		glyph = b.BottomLeft
+	case l == BoxBottom:
+		glyph = b.TopRight // the left pane closes; its rule turns down into the
+	case rt == BoxBottom: // wall the taller pane leans on, and vice versa
+		glyph = b.TopLeft
+	}
+	return m.st.box.Render(glyph)
 }
 
 // renderUnifiedRow shows a single column with +/-/space signs, the shape people
@@ -863,7 +1087,15 @@ func (m *Model) renderStatus() string {
 	}
 	if len(m.view.Rows) == 0 {
 		if m.staging() {
-			return fit(m.st.statusbar.Render(" working tree clean  ·  q quit"), 0, m.width, m.st.statusbar)
+			status := " working tree clean"
+			if m.watch != nil {
+				live := "○ paused"
+				if m.live {
+					live = "● live"
+				}
+				status += "  ·  " + live + "  ·  f follow"
+			}
+			return fit(m.st.statusbar.Render(status+"  ·  q quit"), 0, m.width, m.st.statusbar)
 		}
 		return fit(m.st.statusbar.Render(" no changes  ·  q quit"), 0, m.width, m.st.statusbar)
 	}
@@ -934,7 +1166,7 @@ func (m *Model) renderHelp() string {
 	if m.staging() {
 		rows = append(rows,
 			[2]string{"", ""},
-			[2]string{"space", "mark / unmark the current hunk"},
+			[2]string{"space", "mark this hunk and move to the next one in the file"},
 			[2]string{"a / d", "mark / unmark, then jump to the next hunk"},
 			[2]string{"A / D", "mark / unmark every hunk in this file"},
 			[2]string{"w", "stage what is marked"},

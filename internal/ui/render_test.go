@@ -241,3 +241,91 @@ func TestHorizontalScroll(t *testing.T) {
 func keyPress(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: rune(s[0]), Text: s}
 }
+
+// The outline is one shape crossing both panes: inside it there is no divider
+// between the columns, so the top rule sweeps straight across the seam and the
+// direction marker sits on it.
+func TestChangeBlockOutlineIsOneShape(t *testing.T) {
+	m := newTestModel(t, sample)
+	lines := screen(t, m, 140, 20)
+
+	var top, ctx, arrow string
+	for i, l := range lines {
+		if top == "" && strings.Contains(l, "╭") && i > 0 {
+			top, ctx = l, lines[i-1]
+		}
+		if arrow == "" && strings.Contains(l, "→") {
+			arrow = l
+		}
+	}
+	if top == "" {
+		t.Fatalf("no change block outline on screen:\n%s", strings.Join(lines, "\n"))
+	}
+
+	// Compare cell columns, not byte offsets: box glyphs are three bytes each.
+	seam := col(ctx, '│')
+	if got := at(top, seam); got != '─' {
+		t.Errorf("the top rule reads %q at the seam, want it to sweep across:\n%q\n%q",
+			string(got), ctx, top)
+	}
+	if arrow == "" {
+		t.Error("a change that crosses panes should carry a direction marker")
+	} else if col(arrow, '→') != seam {
+		t.Errorf("the direction marker is at column %d, want the seam at %d: %q",
+			col(arrow, '→'), seam, arrow)
+	}
+	if !strings.HasSuffix(strings.TrimRight(top, " "), "╮") {
+		t.Errorf("the top rule does not close on the right: %q", top)
+	}
+}
+
+// at is the rune in cell column i.
+func at(line string, i int) rune {
+	r := []rune(line)
+	if i < 0 || i >= len(r) {
+		return 0
+	}
+	return r[i]
+}
+
+// col is the last cell column r appears at in a rendered line.
+func col(line string, r rune) int {
+	last := -1
+	for i, c := range []rune(line) {
+		if c == r {
+			last = i
+		}
+	}
+	return last
+}
+
+// Only one file is on screen at a time, so scrolling stops at that file's end
+// instead of dragging the view into the next one. ] and [ change file.
+func TestScrollingStaysInsideTheCurrentFile(t *testing.T) {
+	m := newTestModel(t, sample)
+	screen(t, m, 140, 20)
+
+	_, hi := m.fileSpan(m.cur)
+	for i := 0; i < 50; i++ {
+		m.handleKey(keyPress("j"))
+	}
+	if m.cur != hi-1 {
+		t.Errorf("scrolling down left the cursor at %d, want the file's last row %d", m.cur, hi-1)
+	}
+	if file := m.view.Rows[m.cur].FileIdx; file != 0 {
+		t.Errorf("scrolling ran into file %d, want to stay on 0", file)
+	}
+
+	m.handleKey(keyPress("]"))
+	if file := m.view.Rows[m.cur].FileIdx; file != 1 {
+		t.Fatalf("] did not change file, cursor is on file %d", file)
+	}
+
+	lo, _ := m.fileSpan(m.cur)
+	for i := 0; i < 50; i++ {
+		m.handleKey(keyPress("k"))
+	}
+	if m.cur != lo {
+		t.Errorf("scrolling up left the cursor at %d, want the file's first row %d", m.cur, lo)
+	}
+}

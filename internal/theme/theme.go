@@ -20,18 +20,18 @@ type Theme struct {
 }
 
 // UI colors the frame: panes, headers, sidebar, status bar.
+//
+// Accent is the one highlight color: every place hunk points at something —
+// the @@ line, the current hunk, a change block's outline, the status bar, the
+// selected file — is painted with it, so a theme changes its highlight once.
 type UI struct {
-	Background        string `toml:"background"`
-	Foreground        string `toml:"foreground"`
-	Border            string `toml:"border"`
-	LineNumber        string `toml:"line_number"`
-	FileHeader        string `toml:"file_header"`
-	HunkHeader        string `toml:"hunk_header"`
-	StatusbarFg       string `toml:"statusbar_fg"`
-	StatusbarBg       string `toml:"statusbar_bg"`
-	SidebarFg         string `toml:"sidebar_fg"`
-	SidebarSelectedFg string `toml:"sidebar_selected_fg"`
-	SidebarSelectedBg string `toml:"sidebar_selected_bg"`
+	Background string `toml:"background"`
+	Foreground string `toml:"foreground"`
+	Border     string `toml:"border"`
+	LineNumber string `toml:"line_number"`
+	FileHeader string `toml:"file_header"`
+	Accent     string `toml:"accent"`
+	SidebarFg  string `toml:"sidebar_fg"`
 }
 
 // Diff colors the changes themselves, including the intra-line emphasis that

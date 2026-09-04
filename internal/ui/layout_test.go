@@ -203,3 +203,146 @@ func TestNextPrevIndexEmpty(t *testing.T) {
 		t.Errorf("PrevIndex on an empty index = %d, want the cursor unmoved", got)
 	}
 }
+
+// boxSpans reports, per pane, the rows a change block's outline covers: the
+// index of its opening rule and of its closing rule. Each pane closes on its
+// own last changed line, which is the whole point of the shape.
+func boxSpans(t *testing.T, unified string) (left, right [][2]int, arrows int) {
+	t.Helper()
+	files, err := diff.ParseString(unified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openLeft, openRight := -1, -1
+	for i, r := range Build(files, true).Rows {
+		if r.Arrow {
+			arrows++
+		}
+		switch r.BoxLeft {
+		case BoxTop:
+			openLeft = i
+		case BoxBottom:
+			left = append(left, [2]int{openLeft, i})
+		}
+		switch r.BoxRight {
+		case BoxTop:
+			openRight = i
+		case BoxBottom:
+			right = append(right, [2]int{openRight, i})
+		}
+	}
+	return left, right, arrows
+}
+
+func TestWrapBlocksOutlinesEachPaneOnItsOwnLines(t *testing.T) {
+	tests := []struct {
+		name        string
+		diff        string
+		left, right [][2]int
+		arrows      int
+	}{
+		{
+			name:   "a one-for-one change closes both panes together",
+			diff:   "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n one\n-two\n+2\n",
+			left:   [][2]int{{3, 5}},
+			right:  [][2]int{{3, 5}},
+			arrows: 1,
+		},
+		{
+			name:   "one line becoming three closes the left pane first",
+			diff:   "--- a/x\n+++ b/x\n@@ -1,1 +1,3 @@\n-a\n+1\n+2\n+3\n",
+			left:   [][2]int{{2, 4}}, // opens above the run, shuts after its one line
+			right:  [][2]int{{2, 6}}, // runs on to the last addition
+			arrows: 1,
+		},
+		{
+			name:   "context between two runs makes two blocks",
+			diff:   "--- a/x\n+++ b/x\n@@ -1,4 +1,4 @@\n-a\n+1\n keep\n-b\n+2\n still\n",
+			left:   [][2]int{{2, 4}, {6, 8}},
+			right:  [][2]int{{2, 4}, {6, 8}},
+			arrows: 2,
+		},
+		{
+			name:   "a hole on one side does not split its box",
+			diff:   "--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n-a\n+1\n+2\n-b\n+3\n",
+			left:   [][2]int{{2, 6}},
+			right:  [][2]int{{2, 6}},
+			arrows: 1,
+		},
+		{
+			name:   "a pure addition boxes only the right pane, with no arrow",
+			diff:   "--- a/x\n+++ b/x\n@@ -1,1 +1,2 @@\n keep\n+added\n",
+			left:   nil,
+			right:  [][2]int{{3, 5}},
+			arrows: 0,
+		},
+		{
+			name:   "a pure deletion boxes only the left pane, with no arrow",
+			diff:   "--- a/x\n+++ b/x\n@@ -1,2 +1,1 @@\n keep\n-gone\n",
+			left:   [][2]int{{3, 5}},
+			right:  nil,
+			arrows: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			left, right, arrows := boxSpans(t, tt.diff)
+			if !equalSpans(left, tt.left) {
+				t.Errorf("left pane boxes = %v, want %v", left, tt.left)
+			}
+			if !equalSpans(right, tt.right) {
+				t.Errorf("right pane boxes = %v, want %v", right, tt.right)
+			}
+			if arrows != tt.arrows {
+				t.Errorf("got %d direction markers, want %d", arrows, tt.arrows)
+			}
+		})
+	}
+}
+
+func equalSpans(got, want [][2]int) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Unified view has one column, so one box wraps the whole run however lopsided
+// the change is.
+func TestWrapBlocksUnifiedKeepsOneBox(t *testing.T) {
+	files, err := diff.ParseString("--- a/x\n+++ b/x\n@@ -1,1 +1,3 @@\n-a\n+1\n+2\n+3\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range Build(files, false).Rows {
+		if r.BoxLeft != r.BoxRight {
+			t.Fatalf("unified row %q has BoxLeft=%v BoxRight=%v, want them equal",
+				r.Left.Text+r.Right.Text, r.BoxLeft, r.BoxRight)
+		}
+		if r.Arrow {
+			t.Error("unified view has no second pane to point at")
+		}
+	}
+}
+
+func TestWrapBlocksMarksEnclosedRows(t *testing.T) {
+	files, err := diff.ParseString("--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n keep\n-old\n+new\n last\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range Build(files, true).Rows {
+		if r.Kind != RowPair {
+			continue
+		}
+		changed := r.Left.Kind == diff.Removed || r.Right.Kind == diff.Added
+		if boxed := r.BoxLeft == BoxMid; boxed != changed {
+			t.Errorf("row %q/%q is enclosed=%v, want %v", r.Left.Text, r.Right.Text, boxed, changed)
+		}
+	}
+}

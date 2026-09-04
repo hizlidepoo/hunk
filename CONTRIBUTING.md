@@ -71,6 +71,15 @@ Every change ships with its tests, in the same commit. Concretely:
 - No test may reach the network. Remote theme tests run against an
   `httptest.Server`.
 
+## Docs are not optional either
+
+The same rule as tests: docs ship in the same commit as the change. A new key,
+flag, mode, default, or behavior change means updating README.md (key tables and
+the ASCII sketch included), AGENTS.md, this file where it applies, and the
+`--help` usage text in `main.go` — and removing anything the change made untrue,
+such as an entry in README's "Not in v1". Grep the docs for what you touched
+before you open the PR.
+
 ## Pull requests
 
 - Branch off `main`, one topic per PR.
@@ -79,7 +88,7 @@ Every change ships with its tests, in the same commit. Concretely:
 - `main` is protected: PRs need the `test (ubuntu-latest)`, `test (macos-latest)`
   and `lint` checks green plus one approving review before they can merge.
 - Say what you changed and why. If it changes what the user sees, paste the
-  before and after.
+  before and after — and the docs update is part of the same PR.
 
 ### Commit style
 

@@ -256,7 +256,7 @@ func (m *Model) restoreMarks(snap map[string]markSnapshot) (reset int) {
 // user's place: marks survive by content, the cursor stays on the same hunk,
 // and only edited marks are dropped. Unlike reload, it never resets the screen.
 func (m *Model) liveReload() {
-	curPath, curKey := m.cursorIdentity()
+	where := m.cursorIdentity()
 	snap := m.snapshotMarks()
 
 	text, err := GitSource(m.repo)
@@ -271,10 +271,10 @@ func (m *Model) liveReload() {
 	}
 
 	m.files = files
-	m.view = Build(files, m.builtSplit)
 	reset := m.restoreMarks(snap)
+	m.rebuildView()
 	m.refreshGitState()
-	m.restoreCursor(curPath, curKey)
+	m.restoreCursor(where)
 
 	if reset > 0 {
 		m.msg = fmt.Sprintf("working tree changed — %s reset by new edits", plural(reset, "mark"))
@@ -295,7 +295,7 @@ func (m *Model) reload() error {
 
 	m.files = files
 	m.marks = marks{}
-	m.view = Build(files, m.builtSplit)
+	m.rebuildView()
 	m.cur, m.top = 0, 0
 	m.refreshGitState()
 	return nil
