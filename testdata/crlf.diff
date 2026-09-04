@@ -1,0 +1,8 @@
+diff --git a/crlf.txt b/crlf.txt
+index 1234567..89abcde 100644
+--- a/crlf.txt
++++ b/crlf.txt
+@@ -1,2 +1,2 @@
+ keep
+-old
++new

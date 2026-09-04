@@ -1,0 +1,31 @@
+# hunk-dark — the default theme.
+#
+# Copy this file to ~/.config/hunk/themes/<yourname>.toml and edit it to make
+# your own. Every key is optional: anything you leave out keeps its value here.
+
+name = "hunk-dark"
+
+[ui]
+background          = "#1a1b26"
+foreground          = "#c0caf5"
+border              = "#3b4261"
+line_number         = "#565f89"
+file_header         = "#7dcfff"
+hunk_header         = "#bb9af7"
+statusbar_fg        = "#1a1b26"
+statusbar_bg        = "#7aa2f7"
+sidebar_fg          = "#a9b1d6"
+sidebar_selected_fg = "#1a1b26"
+sidebar_selected_bg = "#7aa2f7"
+
+[diff]
+added_fg        = "#9ece6a"
+added_bg        = "#1e2b1e"
+removed_fg      = "#f7768e"
+removed_bg      = "#2d1e24"
+context_fg      = "#a9b1d6"
+
+# Intra-line emphasis: the words that actually changed on a line, painted a
+# shade stronger than the line's own background.
+added_word_bg   = "#3d5a2e"
+removed_word_bg = "#5a2e38"

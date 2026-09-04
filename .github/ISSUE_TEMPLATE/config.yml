@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or idea
+    url: https://github.com/wmarquardt/hunk/discussions
+    about: For anything that is not yet a bug report or a concrete request.
+  - name: Share a theme
+    url: https://github.com/wmarquardt/hunk#themes-from-github
+    about: Themes do not need a PR — publish them in your own repo and share the reference.
