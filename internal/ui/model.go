@@ -798,28 +798,51 @@ func (m *Model) renderRow(r Row, w int, focus bool) string {
 	trail := m.st.box.Render(edgeGlyph(r.BoxRight, false))
 
 	if !m.builtSplit {
-		return lead + m.paneOr(r.BoxLeft, inner, func() string {
+		return lead + m.paneOr(r.BoxLeft, inner, true, func() string {
 			return m.renderUnifiedRow(r, inner)
 		}) + trail
 	}
 
 	half := (inner - 1) / 2
-	left := m.paneOr(r.BoxLeft, half, func() string {
+	left := m.paneOr(r.BoxLeft, half, true, func() string {
 		return m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll)
 	})
-	right := m.paneOr(r.BoxRight, inner-half-1, func() string {
+	right := m.paneOr(r.BoxRight, inner-half-1, false, func() string {
 		return m.st.renderSide(r.Right, "", numWidth, inner-half-1-numWidth-1, m.hscroll)
 	})
 	return lead + left + m.divider(r) + right + trail
 }
 
 // paneOr draws a pane's share of a rule row, or the pane's normal contents when
-// the outline is not opening or closing here.
-func (m *Model) paneOr(p BoxPart, width int, draw func() string) string {
-	if p == BoxTop || p == BoxBottom {
-		return m.st.box.Render(strings.Repeat(lipgloss.RoundedBorder().Top, width))
+// the outline is not opening or closing here. A closing rule that steps toward
+// the other pane turns down short of the seam and reaches it on the next row.
+func (m *Model) paneOr(p BoxPart, width int, left bool, draw func() string) string {
+	b := lipgloss.RoundedBorder()
+	if (p == BoxTurn || p == BoxJoin) && width < 4 {
+		p = BoxBottom // no room to slope; close it square
 	}
-	return draw()
+	// The step starts a column short of the seam and reaches it on the next
+	// row, so the rule slides into the other pane's wall instead of cornering
+	// into it.
+	rule := strings.Repeat(b.Top, width-2)
+	blank := strings.Repeat(" ", width-2)
+
+	switch p {
+	case BoxTop, BoxBottom:
+		return m.st.box.Render(strings.Repeat(b.Top, width))
+	case BoxTurn:
+		if left {
+			return m.st.box.Render(rule+b.TopRight) + m.st.base.Render(" ")
+		}
+		return m.st.base.Render(" ") + m.st.box.Render(b.TopLeft+rule)
+	case BoxJoin:
+		if left {
+			return m.st.base.Render(blank) + m.st.box.Render(b.BottomLeft+b.Top)
+		}
+		return m.st.box.Render(b.Top+b.BottomRight) + m.st.base.Render(blank)
+	default:
+		return draw()
+	}
 }
 
 // edgeGlyph is the outline's outer column for one pane: a corner where the box
@@ -834,7 +857,7 @@ func edgeGlyph(p BoxPart, left bool) string {
 		return b.TopRight
 	case BoxMid:
 		return b.Left
-	case BoxBottom:
+	case BoxBottom, BoxTurn:
 		if left {
 			return b.BottomLeft
 		}
@@ -863,6 +886,10 @@ func (m *Model) divider(r Row) string {
 		glyph = map[BoxPart]string{BoxTop: b.TopLeft, BoxMid: b.Left, BoxBottom: b.BottomLeft}[r.BoxRight]
 	case r.BoxRight == BoxNone:
 		glyph = map[BoxPart]string{BoxTop: b.TopRight, BoxMid: b.Right, BoxBottom: b.BottomRight}[r.BoxLeft]
+	case r.BoxLeft == BoxJoin:
+		glyph = "┤" // the step from the left pane lands on the right box's wall
+	case r.BoxRight == BoxJoin:
+		glyph = "├"
 	case r.BoxLeft == BoxTop:
 		glyph = "┬"
 	case r.BoxLeft == BoxBottom && r.BoxRight == BoxBottom:

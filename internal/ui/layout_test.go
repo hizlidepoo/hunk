@@ -221,13 +221,13 @@ func boxSpans(t *testing.T, unified string) (left, right [][2]int, arrows int) {
 		switch r.BoxLeft {
 		case BoxTop:
 			openLeft = i
-		case BoxBottom:
+		case BoxBottom, BoxTurn:
 			left = append(left, [2]int{openLeft, i})
 		}
 		switch r.BoxRight {
 		case BoxTop:
 			openRight = i
-		case BoxBottom:
+		case BoxBottom, BoxTurn:
 			right = append(right, [2]int{openRight, i})
 		}
 	}
@@ -344,5 +344,51 @@ func TestWrapBlocksMarksEnclosedRows(t *testing.T) {
 		if boxed := r.BoxLeft == BoxMid; boxed != changed {
 			t.Errorf("row %q/%q is enclosed=%v, want %v", r.Left.Text, r.Right.Text, boxed, changed)
 		}
+	}
+}
+
+// A pane that closes well before the other one steps into its wall instead of
+// cornering into it; with only one row of headroom there is nowhere to put the
+// step, so it closes square.
+func TestWrapBlocksStepsOnlyWhenThereIsRoom(t *testing.T) {
+	tests := []struct {
+		name string
+		diff string
+		want []BoxPart
+	}{
+		{
+			name: "one line becoming three leaves room to step",
+			diff: "--- a/x\n+++ b/x\n@@ -1,1 +1,3 @@\n-a\n+1\n+2\n+3\n",
+			want: []BoxPart{BoxTurn, BoxJoin},
+		},
+		{
+			name: "one line becoming two closes square",
+			diff: "--- a/x\n+++ b/x\n@@ -1,1 +1,2 @@\n-a\n+1\n+2\n",
+			want: []BoxPart{BoxBottom},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files, err := diff.ParseString(tt.diff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []BoxPart
+			for _, r := range Build(files, true).Rows {
+				switch r.BoxLeft {
+				case BoxTurn, BoxJoin, BoxBottom:
+					got = append(got, r.BoxLeft)
+				}
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("left pane closes with %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("close part %d = %v, want %v", i, got[i], tt.want[i])
+				}
+			}
+		})
 	}
 }

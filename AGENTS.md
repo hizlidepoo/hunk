@@ -99,7 +99,8 @@ brackets the run with a `RowBlockTop` and a `RowBlockBottom` and gives every row
 a `BoxPart` per pane (`BoxNone`/`Top`/`Mid`/`Bottom`). Each pane closes on its
 own last changed line, so a pane's closing rule can land on a row where the
 other pane still has text — that is how one line becoming four draws a short box
-facing a tall one. `Model.divider` turns the two parts into the seam glyph, and
+facing a tall one. With two rows of headroom the close is a `BoxTurn`/`BoxJoin`
+step that slides into the other pane's wall; with less, it closes square. `Model.divider` turns the two parts into the seam glyph, and
 `Row.Arrow` marks the row carrying the `→`. It runs per hunk, before the rows
 are appended, so the row indexes in `FileRows`/`HunkRows` stay correct. Every
 row reserves the two outermost columns for the outline, boxed or not — otherwise

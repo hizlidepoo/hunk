@@ -19,8 +19,8 @@ miserable to read as raw `git diff` output.
 │   +12 -4  │  18 │   if tok == "" {          │ 18 │   if tok == "" {          │
 │ ◐ ui/vie… │╭────────────────────────────────┬───────────────────────────────╮│
 │   +1 -0   ││ 19 │     return ErrEmpty       → 19 │     if debug {           ││
-│ · main.go │╰────────────────────────────────┤ 20 │       log(tok)           ││
-│           │                                 │ 21 │     }                    ││
+│ · main.go │╰───────────────────────────────╮  20 │       log(tok)           ││
+│           │                                ╰─┤ 21 │     }                   ││
 │           │                                 ╰───────────────────────────────╯│
 │           │  20 │   }                       │ 22 │   }                       │
 └───────────┴ space mark  A file  w stage  u undo  f follow  ? help  q quit ───┘
@@ -89,8 +89,9 @@ whole change, jump around, mark as you go, then write it all at once.
 
 Every run of changed lines is wrapped in a rounded outline that crosses from one
 pane into the other, with an arrow on the seam pointing the way the change goes.
-Each pane closes on its own last changed line, so one line becoming four draws a
-short box facing a tall one — the outline itself shows the shape of the change.
+Each pane closes on its own last changed line, stepping into the taller pane's
+wall, so one line becoming four draws a short box sliding into a tall one — the
+outline itself shows the shape of the change.
 Inside a line, the words that actually changed are painted a shade stronger.
 
 hunk follows the working tree while it is open: edits made by you, your editor,

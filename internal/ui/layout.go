@@ -57,6 +57,12 @@ const (
 	BoxTop                   // the rule above it
 	BoxMid                   // enclosed: the box's sides run down this row
 	BoxBottom                // the rule below it
+	// BoxTurn and BoxJoin are BoxBottom drawn as a step instead of a corner:
+	// the rule turns down just short of the seam, then reaches it one row
+	// lower, so a pane that closes early slides into the taller pane's wall
+	// rather than butting into it.
+	BoxTurn
+	BoxJoin
 )
 
 // View is the whole render-ready diff plus the indexes navigation needs.
@@ -240,9 +246,14 @@ func wrapBlocks(rows []Row, split bool) []Row {
 		edge.BoxLeft, edge.BoxRight = part(lastLeft >= 0, BoxTop), part(lastRight >= 0, BoxTop)
 		out = append(out, edge)
 
+		// A pane with at least two rows of headroom under it closes with a step
+		// into the other pane's wall; with less room there is nowhere to put the
+		// step, so it closes square.
+		stepLeft, stepRight := lastLeft+2 <= lastRight, lastRight+2 <= lastLeft
+
 		for k := i; k < j; k++ {
-			rows[k].BoxLeft = spanPart(k, lastLeft)
-			rows[k].BoxRight = spanPart(k, lastRight)
+			rows[k].BoxLeft = spanPart(k, lastLeft, stepLeft)
+			rows[k].BoxRight = spanPart(k, lastRight, stepRight)
 			// The direction marker goes on the first enclosed row of a change
 			// that crosses panes; a pure addition or deletion has no direction.
 			rows[k].Arrow = k == i && split && lastLeft >= 0 && lastRight >= 0
@@ -258,16 +269,24 @@ func wrapBlocks(rows []Row, split bool) []Row {
 }
 
 // spanPart places a row inside one pane's box: enclosed while the pane still
-// has changed lines coming, the closing rule on the row right after its last
-// one, and nothing at all once the box is shut.
-func spanPart(row, last int) BoxPart {
+// has changed lines coming, then the closing rule — square on the row right
+// after its last changed line, or a two-row step when this pane closes well
+// before the other one does.
+func spanPart(row, last int, step bool) BoxPart {
 	switch {
-	case last < 0 || row > last+1:
+	case last < 0:
 		return BoxNone
-	case row == last+1:
-		return BoxBottom
-	default:
+	case row <= last:
 		return BoxMid
+	case row == last+1:
+		if step {
+			return BoxTurn
+		}
+		return BoxBottom
+	case row == last+2 && step:
+		return BoxJoin
+	default:
+		return BoxNone
 	}
 }
 
