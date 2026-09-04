@@ -887,11 +887,11 @@ func (m *Model) renderStatus() string {
 			left += fmt.Sprintf("  ·  %s marked in %s", plural(hunks, "hunk"), plural(files, "file"))
 		}
 		if m.watch != nil {
+			ind := "○ paused"
 			if m.live {
-				left += "  ·  ● live"
-			} else {
-				left += "  ·  ○ paused"
+				ind = "● live"
 			}
+			left += "  ·  " + ind
 		}
 		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "?"}, {key: "q"}}
 		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "? help", "q quit"}

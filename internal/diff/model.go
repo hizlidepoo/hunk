@@ -68,8 +68,7 @@ func (f File) Path() string {
 func (h Hunk) Key() string {
 	sum := fnv.New64a()
 	for _, l := range h.Lines {
-		sum.Write([]byte(strconv.Itoa(int(l.Kind))))
-		sum.Write([]byte{0})
+		sum.Write([]byte{byte(l.Kind)})
 		sum.Write([]byte(l.Text))
 		sum.Write([]byte{'\n'})
 	}
