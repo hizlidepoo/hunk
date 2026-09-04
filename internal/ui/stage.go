@@ -184,6 +184,103 @@ func (m *Model) unstageLast() error {
 	return m.repo.UnstageFiles(m.lastWhole)
 }
 
+// markSnapshot captures a file's marks by content rather than by index, so they
+// can be re-applied after the diff is rebuilt from a changed working tree.
+type markSnapshot struct {
+	whole bool            // the whole file was marked (A), so new hunks count too
+	hunks map[string]bool // diff.Hunk.Key values that were marked
+}
+
+// snapshotMarks records the current marks keyed by file path and hunk content.
+// A file with every hunk marked is recorded as whole, so an edit that adds a
+// hunk keeps the file fully marked.
+func (m *Model) snapshotMarks() map[string]markSnapshot {
+	snap := map[string]markSnapshot{}
+	for fileIdx, hunks := range m.marks {
+		f := m.files[fileIdx]
+		s := markSnapshot{hunks: map[string]bool{}}
+		for hunkIdx := range hunks {
+			if hunkIdx == wholeFile {
+				s.whole = true
+				continue
+			}
+			if hunkIdx < len(f.Hunks) {
+				s.hunks[f.Hunks[hunkIdx].Key()] = true
+			}
+		}
+		if len(f.Hunks) > 0 && len(s.hunks) == len(f.Hunks) {
+			s.whole = true
+		}
+		snap[f.Path()] = s
+	}
+	return snap
+}
+
+// restoreMarks re-applies a snapshot to the freshly rebuilt files: a hunk whose
+// content is unchanged keeps its mark, a whole-file mark re-applies to every
+// current hunk, and a hunk that was edited (its key no longer matches) is left
+// unmarked. It returns how many marks were dropped by edits, for the status line.
+func (m *Model) restoreMarks(snap map[string]markSnapshot) (reset int) {
+	m.marks = marks{}
+	for idx, f := range m.files {
+		s, ok := snap[f.Path()]
+		if !ok {
+			continue
+		}
+		if len(f.Hunks) == 0 {
+			if s.whole {
+				m.marks.set(idx, wholeFile, true)
+			}
+			continue
+		}
+		present := map[string]bool{}
+		for hi, h := range f.Hunks {
+			key := h.Key()
+			present[key] = true
+			if s.whole || s.hunks[key] {
+				m.marks.set(idx, hi, true)
+			}
+		}
+		if !s.whole {
+			for key := range s.hunks {
+				if !present[key] {
+					reset++ // this marked hunk was edited or removed
+				}
+			}
+		}
+	}
+	return reset
+}
+
+// liveReload re-reads the working tree and rebuilds the view while keeping the
+// user's place: marks survive by content, the cursor stays on the same hunk,
+// and only edited marks are dropped. Unlike reload, it never resets the screen.
+func (m *Model) liveReload() {
+	curPath, curKey := m.cursorIdentity()
+	snap := m.snapshotMarks()
+
+	text, err := GitSource(m.repo)
+	if err != nil {
+		m.msg = "reload failed: " + firstLine(err.Error())
+		return
+	}
+	files, err := diff.ParseString(text)
+	if err != nil {
+		m.msg = "reload failed: " + firstLine(err.Error())
+		return
+	}
+
+	m.files = files
+	m.view = Build(files, m.builtSplit)
+	reset := m.restoreMarks(snap)
+	m.refreshGitState()
+	m.restoreCursor(curPath, curKey)
+
+	if reset > 0 {
+		m.msg = fmt.Sprintf("working tree changed — %s reset by new edits", plural(reset, "mark"))
+	}
+}
+
 // reload re-reads the working tree after staging, so what is on screen is what
 // is still unstaged.
 func (m *Model) reload() error {

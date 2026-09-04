@@ -2,7 +2,12 @@
 // and turns a selection of hunks back into a patch git can apply.
 package diff
 
-import "github.com/bluekeyes/go-gitdiff/gitdiff"
+import (
+	"hash/fnv"
+	"strconv"
+
+	"github.com/bluekeyes/go-gitdiff/gitdiff"
+)
 
 // Kind is what a line does: it stays, it arrives, or it leaves.
 type Kind int
@@ -53,4 +58,20 @@ func (f File) Path() string {
 		return f.OldPath
 	}
 	return f.NewPath
+}
+
+// Key is a content-stable identity for a hunk: a hash of what each line does
+// and says, but not of its line numbers. Two hunks with the same body match
+// even after edits elsewhere shift their positions, and a hunk stops matching
+// the moment its own content changes — which is how live-follow tells an
+// untouched mark from one that needs re-approving.
+func (h Hunk) Key() string {
+	sum := fnv.New64a()
+	for _, l := range h.Lines {
+		sum.Write([]byte(strconv.Itoa(int(l.Kind))))
+		sum.Write([]byte{0})
+		sum.Write([]byte(l.Text))
+		sum.Write([]byte{'\n'})
+	}
+	return strconv.FormatUint(sum.Sum64(), 36)
 }

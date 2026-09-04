@@ -1,6 +1,10 @@
-# hunk
+<div align="center">
+
+<img src=".github/banner.svg" alt="hunk" width="440">
 
 **Your AI's code might be ugly. The diff won't be.**
+
+</div>
 
 A standalone, themeable diff viewer for the terminal. Side-by-side, word-level
 highlighting, keyboard-driven — and when you run it inside a dirty git

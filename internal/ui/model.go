@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -59,6 +60,12 @@ type Model struct {
 	staged   map[string]bool
 	unstaged map[string]bool
 
+	// Live-follow: watch reports working-tree changes and live is whether hunk
+	// currently acts on them. Both are zero for a plain diff, which never
+	// follows anything.
+	watch *watcher
+	live  bool
+
 	// hints are the clickable option zones on the status bar, rebuilt on every
 	// render so mouse hit-testing matches exactly what is on screen.
 	hints []hintZone
@@ -84,12 +91,24 @@ func New(files []diff.File, t *theme.Theme) *Model {
 	return m
 }
 
-// NewGit is New for a working tree hunk can stage into.
+// NewGit is New for a working tree hunk can stage into. It also starts
+// following the working tree, so edits made while hunk is open show up on their
+// own. A watcher that fails to start just leaves live-follow off.
 func NewGit(repo *git.Repo, files []diff.File, t *theme.Theme) *Model {
 	m := New(files, t)
 	m.repo = repo
 	m.marks = marks{}
 	m.refreshGitState()
+
+	dir := repo.Dir
+	if dir == "" {
+		if wd, err := os.Getwd(); err == nil {
+			dir = wd
+		}
+	}
+	if w, err := newWatcher(dir); err == nil {
+		m.watch, m.live = w, true
+	}
 	return m
 }
 
@@ -125,15 +144,23 @@ func Run(files []diff.File, t *theme.Theme) error {
 
 // RunGit is Run with staging enabled.
 func RunGit(repo *git.Repo, files []diff.File, t *theme.Theme) error {
-	_, err := tea.NewProgram(NewGit(repo, files, t)).Run()
+	m := NewGit(repo, files, t)
+	defer m.watch.Close() // nil-safe; stops the follow goroutine on quit
+	_, err := tea.NewProgram(m).Run()
 	return err
 }
 
 // staging reports whether this session can write to the index.
 func (m *Model) staging() bool { return m.repo != nil }
 
-// Init satisfies tea.Model; hunk has nothing to do before its first render.
-func (m *Model) Init() tea.Cmd { return nil }
+// Init starts following the working tree when live-follow is on; otherwise
+// hunk has nothing to do before its first render.
+func (m *Model) Init() tea.Cmd {
+	if m.live && m.watch != nil {
+		return m.watch.wait()
+	}
+	return nil
+}
 
 func (m *Model) split() bool   { return m.wantSplit && m.contentWidth() >= minSplitWidth }
 func (m *Model) sidebar() bool { return m.wantSidebar && m.width >= minSidebarWidth }
@@ -176,6 +203,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseWheelMsg:
 		return m.handleWheel(msg)
+
+	case fsDirtyMsg:
+		// The tree changed. Reload while preserving marks and cursor, then wait
+		// for the next change. If following was paused since this fired, drop it.
+		if !m.live || m.watch == nil {
+			return m, nil
+		}
+		m.liveReload()
+		return m, m.watch.wait()
 	}
 	return m, nil
 }
@@ -239,6 +275,8 @@ func (m *Model) command(key string) tea.Cmd {
 	case "b":
 		m.wantSidebar = !m.wantSidebar
 		m.rebuildIfNeeded()
+	case "f":
+		return m.toggleFollow()
 	case "?":
 		m.showHelp = true
 
@@ -248,6 +286,25 @@ func (m *Model) command(key string) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// toggleFollow pauses or resumes live-follow. Resuming reloads once right away
+// so the screen catches up on whatever changed while it was paused, then re-arms
+// the watcher.
+func (m *Model) toggleFollow() tea.Cmd {
+	if m.watch == nil {
+		return nil
+	}
+	m.live = !m.live
+	if !m.live {
+		m.msg = "following paused — f to resume"
+		return nil
+	}
+	m.liveReload()
+	if m.msg == "" {
+		m.msg = "following resumed"
+	}
+	return m.watch.wait()
 }
 
 // handleClick routes a left click to whatever is under the pointer: an option
@@ -349,6 +406,60 @@ func (m *Model) handleMarkKey(key string) {
 	case "u":
 		m.undo()
 	}
+}
+
+// cursorIdentity describes where the cursor sits by content, not row number, so
+// its place can be found again after the view is rebuilt. key is empty when the
+// cursor is on a file header rather than a hunk.
+func (m *Model) cursorIdentity() (path, key string) {
+	if m.cur >= len(m.view.Rows) {
+		return "", ""
+	}
+	r := m.view.Rows[m.cur]
+	if r.FileIdx >= len(m.files) {
+		return "", ""
+	}
+	f := m.files[r.FileIdx]
+	if r.HunkIdx >= 0 && r.HunkIdx < len(f.Hunks) {
+		key = f.Hunks[r.HunkIdx].Key()
+	}
+	return f.Path(), key
+}
+
+// restoreCursor puts the cursor back on the same file and hunk after a rebuild,
+// falling back to the file's header, then to a clamped position, when the exact
+// hunk is gone.
+func (m *Model) restoreCursor(path, key string) {
+	fi := m.fileIndexByPath(path)
+	if fi < 0 {
+		m.moveTo(m.cur) // path gone; just clamp and stay near where we were
+		return
+	}
+	target := m.view.FileRows[fi]
+	if key != "" {
+		globalHunk := 0
+		for i := 0; i < fi; i++ {
+			globalHunk += len(m.files[i].Hunks)
+		}
+		for hi, h := range m.files[fi].Hunks {
+			if h.Key() == key {
+				if g := globalHunk + hi; g < len(m.view.HunkRows) {
+					target = m.view.HunkRows[g]
+				}
+				break
+			}
+		}
+	}
+	m.moveTo(target)
+}
+
+func (m *Model) fileIndexByPath(path string) int {
+	for i, f := range m.files {
+		if f.Path() == path {
+			return i
+		}
+	}
+	return -1
 }
 
 // currentTarget is the file and hunk the cursor is on. A file with no hunks
@@ -593,19 +704,27 @@ func (m *Model) renderBody() []string {
 // row, a thin accent bar down the active hunk, and a green bar down any marked
 // hunk so what will be staged is visible at a glance. Green always means marked.
 func (m *Model) railMark(row, hlo, hhi int) string {
-	if row == m.cur {
-		return m.st.cursor.Render("▌")
-	}
+	cursor := row == m.cur
 	current := hlo <= row && row < hhi
 	marked := m.rowMarked(row)
 
+	// A marked hunk gets a solid bar so it reads as a block; the current hunk
+	// gets a thin accent. The cursor is always solid so its line is findable.
+	glyph := "▎"
+	if cursor || marked {
+		glyph = "▌"
+	}
+
+	// Marked wins the color outright — a whole marked hunk reads green top to
+	// bottom, including the cursor line, so "this will be staged" is never
+	// masked by the cursor or the current-hunk accent.
 	switch {
-	case current && marked:
-		return m.st.railMarked.Render("▎")
-	case current:
-		return m.st.focusRail.Render("▎")
 	case marked:
-		return m.st.railMarked.Render("▌")
+		return m.st.railMarked.Render(glyph)
+	case cursor:
+		return m.st.cursor.Render(glyph)
+	case current:
+		return m.st.focusRail.Render(glyph)
 	default:
 		return m.st.base.Render(" ")
 	}
@@ -767,8 +886,15 @@ func (m *Model) renderStatus() string {
 		if hunks, files := m.marks.total(); hunks > 0 {
 			left += fmt.Sprintf("  ·  %s marked in %s", plural(hunks, "hunk"), plural(files, "file"))
 		}
-		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "?"}, {key: "q"}}
-		labels = []string{"space mark", "A file", "w stage", "u undo", "? help", "q quit"}
+		if m.watch != nil {
+			if m.live {
+				left += "  ·  ● live"
+			} else {
+				left += "  ·  ○ paused"
+			}
+		}
+		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "?"}, {key: "q"}}
+		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "? help", "q quit"}
 	}
 
 	right := strings.Join(labels, "  ") + " "
@@ -813,6 +939,7 @@ func (m *Model) renderHelp() string {
 			[2]string{"A / D", "mark / unmark every hunk in this file"},
 			[2]string{"w", "stage what is marked"},
 			[2]string{"u", "undo the last stage"},
+			[2]string{"f", "pause / resume following file changes"},
 		)
 	}
 

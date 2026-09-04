@@ -115,6 +115,7 @@ func gitModel(t *testing.T, committed, edited map[string]string) (*Model, *git.R
 	}
 
 	m := NewGit(repo, files, theme.Default())
+	t.Cleanup(func() { m.watch.Close() }) // stop the follow goroutine started by NewGit
 	u, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 24})
 	return u.(*Model), repo
 }
@@ -316,6 +317,29 @@ func TestMarkedHunkShowsGreenRail(t *testing.T) {
 	hlo, hhi := m.currentHunkSpan()
 	if got := m.railMark(row, hlo, hhi); got != m.st.railMarked.Render("▌") {
 		t.Errorf("marked hunk row rail = %q, want the green marked bar", got)
+	}
+}
+
+func TestMarkedCurrentHunkStaysGreenUnderCursor(t *testing.T) {
+	base := lines(30)
+	m, _ := gitModel(t,
+		map[string]string{"a.txt": base},
+		map[string]string{"a.txt": replaceLine(base, 5, "CHANGED")},
+	)
+
+	// Mark the hunk and leave the cursor on it, so it is marked AND current.
+	m.moveTo(m.view.HunkRows[0] + 1)
+	m.handleKey(keyPress(" "))
+
+	hlo, hhi := m.currentHunkSpan()
+	// The cursor line of a marked hunk must read green, not the cursor or the
+	// current-hunk accent — marked is what the user needs to see.
+	if got := m.railMark(m.cur, hlo, hhi); got != m.st.railMarked.Render("▌") {
+		t.Errorf("cursor row of a marked hunk = %q, want the green marked bar", got)
+	}
+	// A non-cursor row of the same hunk is green too.
+	if got := m.railMark(hlo, hlo, hhi); got != m.st.railMarked.Render("▌") {
+		t.Errorf("marked+current row = %q, want the green marked bar", got)
 	}
 }
 
