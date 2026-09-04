@@ -2,6 +2,13 @@ BIN     := hunk
 PKG     := ./...
 BIN_DIR := bin
 
+# Where `go install` puts the binary. GOBIN wins when it is set; otherwise Go
+# uses GOPATH/bin. Asking the toolchain keeps this right on every OS.
+GO_BIN := $(shell go env GOBIN)
+ifeq ($(GO_BIN),)
+GO_BIN := $(shell go env GOPATH)/bin
+endif
+
 # Args passed to `make run`, e.g. `make run ARGS="old.txt new.txt"`.
 ARGS ?=
 
@@ -17,10 +24,12 @@ build:
 run:
 	go run . $(ARGS)
 
-## install: install hunk into your GOBIN
+## install: install hunk onto your PATH — works on any OS
 .PHONY: install
 install:
 	go install .
+	@echo "installed: $(GO_BIN)/$(BIN)"
+	@echo "add $(GO_BIN) to your PATH to run $(BIN) by name"
 
 ## test: run the test suite
 .PHONY: test
