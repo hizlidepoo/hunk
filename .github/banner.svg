@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="580" height="210" viewBox="0 0 580 210" role="img" aria-label="hunk">
+  <style>
+    text { font-family: "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace; font-size: 26px; font-weight: 700; white-space: pre; }
+    .removed { fill: #f7768e; }
+    .added   { fill: #9ece6a; }
+  </style>
+  <g text-anchor="middle">
+    <text x="290" y="34"  class="removed" xml:space="preserve">- ██╗  ██╗██╗   ██╗███╗   ██╗██╗  ██╗</text>
+    <text x="290" y="66"  class="removed" xml:space="preserve">- ██║  ██║██║   ██║████╗  ██║██║ ██╔╝</text>
+    <text x="290" y="98"  class="removed" xml:space="preserve">- ███████║██║   ██║██╔██╗ ██║█████╔╝</text>
+    <text x="290" y="130" class="added"   xml:space="preserve">+ ██╔══██║██║   ██║██║╚██╗██║██╔═██╗</text>
+    <text x="290" y="162" class="added"   xml:space="preserve">+ ██║  ██║╚██████╔╝██║ ╚████║██║  ██╗</text>
+    <text x="290" y="194" class="added"   xml:space="preserve">+ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝</text>
+  </g>
+</svg>
