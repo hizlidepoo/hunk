@@ -92,6 +92,8 @@ func GitSource(r *git.Repo) (string, error) {
 
 	var b strings.Builder
 	b.WriteString(text)
+
+	included := map[string]bool{}
 	for _, path := range untracked {
 		content, err := os.ReadFile(filepath.Join(r.Dir, path))
 		if err != nil {
@@ -99,8 +101,36 @@ func GitSource(r *git.Repo) (string, error) {
 			// worth aborting a review over.
 			continue
 		}
+		included[path] = true
 		b.WriteString(diff.NewFilePatch(path, content))
 	}
+
+	// A fully staged file has no unstaged changes, so it would drop off the
+	// list. Keep it on screen by including its staged diff, so staging never
+	// makes a file vanish — it just gets a check beside it.
+	unstaged, err := r.UnstagedPaths()
+	if err != nil {
+		return "", err
+	}
+	for _, path := range unstaged {
+		included[path] = true
+	}
+	staged, err := r.StagedPaths()
+	if err != nil {
+		return "", err
+	}
+	var stagedOnly []string
+	for _, path := range staged {
+		if !included[path] {
+			stagedOnly = append(stagedOnly, path)
+		}
+	}
+	stagedDiff, err := r.StagedDiff(stagedOnly)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString(stagedDiff)
+
 	return b.String(), nil
 }
 
@@ -137,8 +167,21 @@ func (m *Model) stageMarked() (string, error) {
 		return "", err
 	}
 
+	// Remember exactly what went in so "u" can reverse this stage and nothing
+	// else.
+	m.lastPatch, m.lastWhole = patch.String(), wholeFiles
+
 	hunks, files := m.marks.total()
 	return fmt.Sprintf("staged %s in %s", plural(hunks, "hunk"), plural(files, "file")), nil
+}
+
+// unstageLast reverses the most recent stage: the hunk patch comes back out of
+// the index, and any whole files staged alongside it are removed too.
+func (m *Model) unstageLast() error {
+	if err := m.repo.UnapplyCached(m.lastPatch); err != nil {
+		return err
+	}
+	return m.repo.UnstageFiles(m.lastWhole)
 }
 
 // reload re-reads the working tree after staging, so what is on screen is what
@@ -157,6 +200,7 @@ func (m *Model) reload() error {
 	m.marks = marks{}
 	m.view = Build(files, m.builtSplit)
 	m.cur, m.top = 0, 0
+	m.refreshGitState()
 	return nil
 }
 

@@ -66,6 +66,42 @@ func (r *Repo) Untracked() ([]string, error) {
 	return files, nil
 }
 
+// UnstagedPaths lists files with changes in the working tree that are not yet
+// staged — the files Diff would show, by name.
+func (r *Repo) UnstagedPaths() ([]string, error) {
+	return r.names("diff", "--name-only")
+}
+
+// StagedPaths lists files with content staged in the index against HEAD.
+func (r *Repo) StagedPaths() ([]string, error) {
+	return r.names("diff", "--cached", "--name-only")
+}
+
+// StagedDiff returns the staged diff (index against HEAD) for the given paths.
+// It is what lets a fully staged file stay on screen with its changes visible.
+func (r *Repo) StagedDiff(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", nil
+	}
+	args := append([]string{"diff", "--cached", "--no-color", "--no-ext-diff", "-U3", "--"}, paths...)
+	return r.run("", args...)
+}
+
+// names runs a git command that prints one path per line and returns them.
+func (r *Repo) names(args ...string) ([]string, error) {
+	out, err := r.run("", args...)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, line := range strings.Split(out, "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files, nil
+}
+
 // StageFiles stages whole files. Used for untracked files, which have no hunks
 // to choose between.
 func (r *Repo) StageFiles(paths []string) error {
@@ -88,6 +124,27 @@ func (r *Repo) ApplyCached(patch string) error {
 		return nil
 	}
 	_, err := r.run(patch, "apply", "--cached", "--recount", "--unidiff-zero", "-")
+	return err
+}
+
+// UnapplyCached reverses a patch that was staged with ApplyCached, taking
+// exactly those changes back out of the index and nothing else. It is the undo
+// for a hunk stage.
+func (r *Repo) UnapplyCached(patch string) error {
+	if strings.TrimSpace(patch) == "" {
+		return nil
+	}
+	_, err := r.run(patch, "apply", "--cached", "--reverse", "--recount", "--unidiff-zero", "-")
+	return err
+}
+
+// UnstageFiles removes whole files from the index, the undo for StageFiles.
+func (r *Repo) UnstageFiles(paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"restore", "--staged", "--"}, paths...)
+	_, err := r.run("", args...)
 	return err
 }
 
