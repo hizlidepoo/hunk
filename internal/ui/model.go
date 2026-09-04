@@ -798,51 +798,28 @@ func (m *Model) renderRow(r Row, w int, focus bool) string {
 	trail := m.st.box.Render(edgeGlyph(r.BoxRight, false))
 
 	if !m.builtSplit {
-		return lead + m.paneOr(r.BoxLeft, inner, true, func() string {
+		return lead + m.paneOr(r.BoxLeft, inner, func() string {
 			return m.renderUnifiedRow(r, inner)
 		}) + trail
 	}
 
 	half := (inner - 1) / 2
-	left := m.paneOr(r.BoxLeft, half, true, func() string {
+	left := m.paneOr(r.BoxLeft, half, func() string {
 		return m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll)
 	})
-	right := m.paneOr(r.BoxRight, inner-half-1, false, func() string {
+	right := m.paneOr(r.BoxRight, inner-half-1, func() string {
 		return m.st.renderSide(r.Right, "", numWidth, inner-half-1-numWidth-1, m.hscroll)
 	})
 	return lead + left + m.divider(r) + right + trail
 }
 
 // paneOr draws a pane's share of a rule row, or the pane's normal contents when
-// the outline is not opening or closing here. A closing rule that steps toward
-// the other pane turns down short of the seam and reaches it on the next row.
-func (m *Model) paneOr(p BoxPart, width int, left bool, draw func() string) string {
-	b := lipgloss.RoundedBorder()
-	if (p == BoxTurn || p == BoxJoin) && width < 4 {
-		p = BoxBottom // no room to slope; close it square
+// the outline is not opening or closing here.
+func (m *Model) paneOr(p BoxPart, width int, draw func() string) string {
+	if p == BoxTop || p == BoxBottom {
+		return m.st.box.Render(strings.Repeat(lipgloss.RoundedBorder().Top, width))
 	}
-	// The step starts a column short of the seam and reaches it on the next
-	// row, so the rule slides into the other pane's wall instead of cornering
-	// into it.
-	rule := strings.Repeat(b.Top, width-2)
-	blank := strings.Repeat(" ", width-2)
-
-	switch p {
-	case BoxTop, BoxBottom:
-		return m.st.box.Render(strings.Repeat(b.Top, width))
-	case BoxTurn:
-		if left {
-			return m.st.box.Render(rule+b.TopRight) + m.st.base.Render(" ")
-		}
-		return m.st.base.Render(" ") + m.st.box.Render(b.TopLeft+rule)
-	case BoxJoin:
-		if left {
-			return m.st.base.Render(blank) + m.st.box.Render(b.BottomLeft+b.Top)
-		}
-		return m.st.box.Render(b.Top+b.BottomRight) + m.st.base.Render(blank)
-	default:
-		return draw()
-	}
+	return draw()
 }
 
 // edgeGlyph is the outline's outer column for one pane: a corner where the box
@@ -857,7 +834,7 @@ func edgeGlyph(p BoxPart, left bool) string {
 		return b.TopRight
 	case BoxMid:
 		return b.Left
-	case BoxBottom, BoxTurn:
+	case BoxBottom:
 		if left {
 			return b.BottomLeft
 		}
@@ -867,39 +844,45 @@ func edgeGlyph(p BoxPart, left bool) string {
 	}
 }
 
-// divider draws the column between the panes. Inside a block it is the seam
-// where the two halves of the outline meet, so it shows what each side is
-// doing: both open, one closing while the other runs on, or one pane alone.
+// divider draws the column between the panes. Inside a block there is no
+// divider: the outline is one shape, so the seam carries whatever the outline
+// is doing on that row — the rule sweeping across, a corner where a box that
+// covers only one pane turns, the turn down into the taller pane, that pane's
+// wall, or the corner where it finally closes.
 func (m *Model) divider(r Row) string {
+	b := lipgloss.RoundedBorder()
+	l, rt := r.BoxLeft, r.BoxRight
+
+	if l == BoxNone && rt == BoxNone {
+		return m.st.gutter.Render("│")
+	}
 	if r.Arrow {
 		// The change reads left to right — old on the left, new on the right —
-		// and the marker says so where the two halves join.
+		// and the marker says so, floating in the gap inside the outline.
 		return m.st.box.Bold(true).Render("→")
 	}
 
-	b := lipgloss.RoundedBorder()
-	glyph := ""
+	glyph := b.Left // one pane is enclosed and the other is not: its wall
 	switch {
-	case r.BoxLeft == BoxNone && r.BoxRight == BoxNone:
-		return m.st.gutter.Render("│")
-	case r.BoxLeft == BoxNone:
-		glyph = map[BoxPart]string{BoxTop: b.TopLeft, BoxMid: b.Left, BoxBottom: b.BottomLeft}[r.BoxRight]
-	case r.BoxRight == BoxNone:
-		glyph = map[BoxPart]string{BoxTop: b.TopRight, BoxMid: b.Right, BoxBottom: b.BottomRight}[r.BoxLeft]
-	case r.BoxLeft == BoxJoin:
-		glyph = "┤" // the step from the left pane lands on the right box's wall
-	case r.BoxRight == BoxJoin:
-		glyph = "├"
-	case r.BoxLeft == BoxTop:
-		glyph = "┬"
-	case r.BoxLeft == BoxBottom && r.BoxRight == BoxBottom:
-		glyph = "┴"
-	case r.BoxLeft == BoxBottom:
-		glyph = "┤" // the left pane closes; the right box runs on past it
-	case r.BoxRight == BoxBottom:
-		glyph = "├"
-	default:
-		glyph = b.Left
+	case l == rt: // both panes do the same thing here
+		switch l {
+		case BoxTop, BoxBottom:
+			glyph = b.Top // one rule sweeping across both panes
+		default:
+			glyph = " " // inside the box, nothing separates the panes
+		}
+	case l == BoxTop:
+		glyph = b.TopRight // a box over the left pane only
+	case rt == BoxTop:
+		glyph = b.TopLeft
+	case l == BoxBottom && rt == BoxNone:
+		glyph = b.BottomRight
+	case rt == BoxBottom && l == BoxNone:
+		glyph = b.BottomLeft
+	case l == BoxBottom:
+		glyph = b.TopRight // the left pane closes; its rule turns down into the
+	case rt == BoxBottom: // wall the taller pane leans on, and vice versa
+		glyph = b.TopLeft
 	}
 	return m.st.box.Render(glyph)
 }

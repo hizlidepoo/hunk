@@ -242,10 +242,10 @@ func keyPress(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: rune(s[0]), Text: s}
 }
 
-// The outline is one shape crossing both panes: its rule must splice into the
-// column divider that the rows above and below draw, or the box reads as two
-// unrelated brackets. The direction marker sits on the same seam.
-func TestChangeBlockOutlineAlignsWithTheDivider(t *testing.T) {
+// The outline is one shape crossing both panes: inside it there is no divider
+// between the columns, so the top rule sweeps straight across the seam and the
+// direction marker sits on it.
+func TestChangeBlockOutlineIsOneShape(t *testing.T) {
 	m := newTestModel(t, sample)
 	lines := screen(t, m, 140, 20)
 
@@ -261,14 +261,12 @@ func TestChangeBlockOutlineAlignsWithTheDivider(t *testing.T) {
 	if top == "" {
 		t.Fatalf("no change block outline on screen:\n%s", strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(top, "┬") {
-		t.Errorf("the top rule does not splice into the divider: %q", top)
-	}
+
 	// Compare cell columns, not byte offsets: box glyphs are three bytes each.
 	seam := col(ctx, '│')
-	if col(top, '┬') != seam {
-		t.Errorf("the splice is at column %d but the divider is at %d:\n%q\n%q",
-			col(top, '┬'), seam, ctx, top)
+	if got := at(top, seam); got != '─' {
+		t.Errorf("the top rule reads %q at the seam, want it to sweep across:\n%q\n%q",
+			string(got), ctx, top)
 	}
 	if arrow == "" {
 		t.Error("a change that crosses panes should carry a direction marker")
@@ -279,6 +277,15 @@ func TestChangeBlockOutlineAlignsWithTheDivider(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimRight(top, " "), "╮") {
 		t.Errorf("the top rule does not close on the right: %q", top)
 	}
+}
+
+// at is the rune in cell column i.
+func at(line string, i int) rune {
+	r := []rune(line)
+	if i < 0 || i >= len(r) {
+		return 0
+	}
+	return r[i]
 }
 
 // col is the last cell column r appears at in a rendered line.
