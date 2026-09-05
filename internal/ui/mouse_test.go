@@ -63,7 +63,7 @@ func TestHelpRendersAsModalOverDiff(t *testing.T) {
 	m.showHelp = true
 
 	out := ansi.Strip(m.render())
-	if !strings.Contains(out, "╭") || !strings.Contains(out, "╰") {
+	if !strings.Contains(out, "┏") || !strings.Contains(out, "┗") {
 		t.Fatal("help is not drawn as a bordered box")
 	}
 	// The diff behind the modal is still visible: the box does not fill the row.

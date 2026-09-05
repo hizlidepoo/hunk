@@ -70,7 +70,7 @@ func newStyles(t *theme.Theme) styles {
 		help:        base.Foreground(c(t.UI.Foreground)),
 		sidebar:     base.Foreground(c(t.UI.SidebarFg)),
 		sidebarSel:  lipgloss.NewStyle().Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)),
-		modal:       base.Border(lipgloss.RoundedBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.UI.Border)).Padding(0, 2),
+		modal:       base.Border(lipgloss.ThickBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.UI.Accent)).Padding(0, 2),
 		modalTitle:  base.Foreground(c(t.UI.FileHeader)).Bold(true),
 		focusRail:   base.Foreground(c(t.UI.Accent)).Bold(true),
 		focusHeader: base.Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)).Bold(true),

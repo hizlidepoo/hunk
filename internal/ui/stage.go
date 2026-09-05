@@ -271,7 +271,8 @@ func (m *Model) liveReload() {
 		return
 	}
 
-	m.files = files
+	m.raw = files
+	m.applyFilter()
 	reset := m.restoreMarks(snap)
 	m.rebuildView()
 	m.refreshGitState()
@@ -294,7 +295,8 @@ func (m *Model) reload() error {
 		return err
 	}
 
-	m.files = files
+	m.raw = files
+	m.applyFilter()
 	m.marks = marks{}
 	m.rebuildView()
 	m.cur, m.top = 0, 0
