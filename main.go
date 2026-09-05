@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 
 	"github.com/charmbracelet/x/term"
 
@@ -53,7 +54,14 @@ func run() error {
 	context := flag.Int("context", diff.DefaultContext, "unchanged lines shown around each hunk")
 	flag.IntVar(context, "U", diff.DefaultContext, "shorthand for -context")
 	showWS := flag.Bool("show-whitespace", false, "render tabs and trailing spaces as visible marks")
+	filter := flag.String("filter", "", "hide hunks whose every changed line matches this regex")
 	flag.Parse()
+
+	if *filter != "" {
+		if _, err := regexp.Compile(*filter); err != nil {
+			return fmt.Errorf("bad -filter pattern: %w", err)
+		}
+	}
 
 	th := loadTheme(*themeRef, *themeUpdate)
 	opts := ui.Options{
@@ -63,6 +71,7 @@ func run() error {
 		NoFollow:  *noFollow,
 		Context:   *context,
 		ShowWS:    *showWS,
+		Filter:    *filter,
 	}
 
 	repo, text, err := source(flag.Args(), opts.IgnoreWS, opts.Context)

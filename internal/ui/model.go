@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -94,6 +95,16 @@ type Model struct {
 	// rendering choice — no re-diff — so it works in every mode.
 	showWS bool
 
+	// raw is every parsed file; files is raw after the regex filter drops hunks
+	// whose every changed line matches. filter nil means files == raw.
+	raw    []diff.File
+	filter *regexp.Regexp
+
+	// Regex filter prompt (F), same shape as search.
+	filterInput bool
+	filterTyped string
+	filterSrc   string
+
 	// clock, lastMark and lastMarkAt tell a held space bar from a deliberate
 	// second press. clock is a field so tests do not have to sleep.
 	clock      func() time.Time
@@ -116,12 +127,13 @@ type hintZone struct {
 // has an in-app key that still toggles it during a session; these just pick the
 // state hunk opens in.
 type Options struct {
-	IgnoreWS  bool // -w: open with whitespace-only changes hidden
-	Unified   bool // -u: open unified instead of side-by-side
-	NoSidebar bool // --no-sidebar: open with the file sidebar hidden
-	NoFollow  bool // --no-follow: open with live-follow paused
-	Context   int  // --context: unchanged lines around each hunk (0 falls back to the default)
-	ShowWS    bool // --show-whitespace: render tabs and trailing spaces as marks
+	IgnoreWS  bool   // -w: open with whitespace-only changes hidden
+	Unified   bool   // -u: open unified instead of side-by-side
+	NoSidebar bool   // --no-sidebar: open with the file sidebar hidden
+	NoFollow  bool   // --no-follow: open with live-follow paused
+	Context   int    // --context: unchanged lines around each hunk (0 falls back to the default)
+	ShowWS    bool   // --show-whitespace: render tabs and trailing spaces as marks
+	Filter    string // --filter: hide hunks whose every changed line matches this regex
 }
 
 // New builds a model over an already-parsed diff.
@@ -131,7 +143,7 @@ func New(files []diff.File, t *theme.Theme, opts Options) *Model {
 		context = diff.DefaultContext
 	}
 	m := &Model{
-		files:       files,
+		raw:         files,
 		st:          newStyles(t),
 		wantSplit:   !opts.Unified,
 		wantSidebar: !opts.NoSidebar,
@@ -142,8 +154,80 @@ func New(files []diff.File, t *theme.Theme, opts Options) *Model {
 		clock:       time.Now,
 		lastMark:    [2]int{-1, -1},
 	}
+	if opts.Filter != "" {
+		// A bad pattern from the flag is main's job to reject; ignore it here.
+		m.filter, m.filterSrc = compileFilter(opts.Filter)
+	}
+	m.applyFilter()
 	m.rebuildView()
 	return m
+}
+
+// compileFilter returns the compiled regex and the source it came from, or a
+// nil regex when the pattern does not compile.
+func compileFilter(src string) (*regexp.Regexp, string) {
+	re, err := regexp.Compile(src)
+	if err != nil {
+		return nil, ""
+	}
+	return re, src
+}
+
+// applyFilter recomputes the visible files from raw and the active filter.
+func (m *Model) applyFilter() { m.files = filterFiles(m.raw, m.filter) }
+
+// filterFiles drops every hunk whose changed lines all match re, and every file
+// left with no hunks. A nil re shows everything. Binary/hunkless files are kept
+// as-is: a line filter has nothing to say about them.
+func filterFiles(files []diff.File, re *regexp.Regexp) []diff.File {
+	if re == nil {
+		return files
+	}
+	out := make([]diff.File, 0, len(files))
+	for _, f := range files {
+		if len(f.Hunks) == 0 {
+			out = append(out, f)
+			continue
+		}
+		kept := make([]diff.Hunk, 0, len(f.Hunks))
+		var added, removed int
+		for _, h := range f.Hunks {
+			if hunkAllMatch(h, re) {
+				continue
+			}
+			kept = append(kept, h)
+			for _, l := range h.Lines {
+				switch l.Kind {
+				case diff.Added:
+					added++
+				case diff.Removed:
+					removed++
+				}
+			}
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		f.Hunks, f.Added, f.Removed = kept, added, removed
+		out = append(out, f)
+	}
+	return out
+}
+
+// hunkAllMatch reports whether every changed (added/removed) line in the hunk
+// matches re — i.e. the hunk is pure noise the filter should hide.
+func hunkAllMatch(h diff.Hunk, re *regexp.Regexp) bool {
+	changed := 0
+	for _, l := range h.Lines {
+		if l.Kind == diff.Context {
+			continue
+		}
+		changed++
+		if !re.MatchString(l.Text) {
+			return false
+		}
+	}
+	return changed > 0
 }
 
 // rebuildView re-flattens the files into rows. Everything that changes the diff
@@ -285,9 +369,13 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// While the / prompt is open, keys edit the query, not the diff.
+	// While a prompt is open, keys edit its text, not the diff.
 	if m.searchInput {
 		m.searchKey(msg)
+		return m, nil
+	}
+	if m.filterInput {
+		m.filterKey(msg)
 		return m, nil
 	}
 
@@ -372,6 +460,8 @@ func (m *Model) command(key string) tea.Cmd {
 		} else {
 			m.msg = "hiding whitespace"
 		}
+	case "F":
+		m.filterInput, m.filterTyped = true, ""
 	case "?":
 		m.showHelp = true
 
@@ -456,6 +546,53 @@ func (m *Model) searchKey(msg tea.KeyPressMsg) {
 		// Key.Text is non-empty only for printable input, so control keys are
 		// ignored here without a list of names to maintain.
 		m.typed += msg.Key().Text
+	}
+}
+
+// filterKey edits the F prompt. Enter compiles the regex and hides matching
+// hunks (an empty pattern clears the filter); esc abandons the edit; a bad
+// pattern is reported and the old filter stays.
+func (m *Model) filterKey(msg tea.KeyPressMsg) {
+	switch msg.String() {
+	case "esc":
+		m.filterInput, m.filterTyped = false, ""
+	case "enter":
+		m.filterInput = false
+		m.setFilter(m.filterTyped)
+	case "backspace":
+		if r := []rune(m.filterTyped); len(r) > 0 {
+			m.filterTyped = string(r[:len(r)-1])
+		}
+	default:
+		m.filterTyped += msg.Key().Text
+	}
+}
+
+// setFilter swaps the active regex and re-derives the visible diff, keeping the
+// marks and cursor that still exist afterwards.
+func (m *Model) setFilter(src string) {
+	var re *regexp.Regexp
+	if src != "" {
+		var err error
+		if re, err = regexp.Compile(src); err != nil {
+			m.msg = "bad filter: " + firstLine(err.Error())
+			return
+		}
+	}
+
+	where := m.cursorIdentity()
+	snap := m.snapshotMarks()
+	m.filter, m.filterSrc = re, src
+	m.applyFilter()
+	m.restoreMarks(snap)
+	m.rebuildView()
+	m.restoreCursor(where)
+
+	switch {
+	case re == nil:
+		m.msg = "filter cleared"
+	default:
+		m.msg = "filtering out /" + src + "/"
 	}
 }
 
@@ -1254,9 +1391,12 @@ func (m *Model) renderStatus() string {
 	// No hints are clickable unless the option row below actually draws them.
 	m.hints = nil
 
-	// The / prompt takes over the status line while it is open.
+	// A prompt takes over the status line while it is open.
 	if m.searchInput {
 		return fit(m.st.statusbar.Render(" /"+m.typed+"█"), 0, m.width, m.st.statusbar)
+	}
+	if m.filterInput {
+		return fit(m.st.statusbar.Render(" filter out: "+m.filterTyped+"█"), 0, m.width, m.st.statusbar)
 	}
 
 	// A message — a confirmation prompt, or the result of staging — replaces the
@@ -1265,6 +1405,9 @@ func (m *Model) renderStatus() string {
 		return fit(m.st.statusbar.Render(" "+m.msg), 0, m.width, m.st.statusbar)
 	}
 	if len(m.view.Rows) == 0 {
+		if m.filter != nil {
+			return fit(m.st.statusbar.Render(" everything is filtered out by /"+m.filterSrc+"/  ·  F filter  ·  q quit"), 0, m.width, m.st.statusbar)
+		}
 		if m.staging() {
 			status := " working tree clean"
 			if m.ignoreWS {
@@ -1298,10 +1441,13 @@ func (m *Model) renderStatus() string {
 	if m.showWS {
 		left += "  ·  ·→"
 	}
-	opts := []hintZone{
-		{key: "n"}, {key: "]"}, {key: "s"}, {key: "/"}, {key: "W"}, {key: "?"}, {key: "q"},
+	if m.filter != nil {
+		left += "  ·  ⊘ /" + m.filterSrc + "/"
 	}
-	labels := []string{"n/p hunk", "]/[ file", "s split", "/ search", "W space", "? help", "q quit"}
+	opts := []hintZone{
+		{key: "n"}, {key: "]"}, {key: "s"}, {key: "/"}, {key: "W"}, {key: "F"}, {key: "?"}, {key: "q"},
+	}
+	labels := []string{"n/p hunk", "]/[ file", "s split", "/ search", "W space", "F filter", "? help", "q quit"}
 	if m.staging() {
 		if hunks, files := m.marks.total(); hunks > 0 {
 			left += fmt.Sprintf("  ·  %s marked in %s", plural(hunks, "hunk"), plural(files, "file"))
@@ -1319,8 +1465,8 @@ func (m *Model) renderStatus() string {
 		if m.context != diff.DefaultContext {
 			left += fmt.Sprintf("  ·  ⋯ %d", m.context)
 		}
-		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "+"}, {key: "W"}, {key: "/"}, {key: "?"}, {key: "q"}}
-		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "+/- ctx", "W space", "/ search", "? help", "q quit"}
+		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "+"}, {key: "W"}, {key: "/"}, {key: "F"}, {key: "?"}, {key: "q"}}
+		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "+/- ctx", "W space", "/ search", "F filter", "? help", "q quit"}
 	}
 
 	right := strings.Join(labels, "  ") + " "
@@ -1352,6 +1498,7 @@ func (m *Model) renderHelp() string {
 		{"/", "search; enter jumps, esc clears"},
 		{"n / N", "next / previous match (while searching)"},
 		{"W", "show / hide whitespace (tabs, trailing spaces)"},
+		{"F", "filter out hunks matching a regex; empty clears"},
 		{"h / l, ← / →", "scroll sideways"},
 		{"s", "toggle side-by-side / unified"},
 		{"b", "toggle the file sidebar"},
