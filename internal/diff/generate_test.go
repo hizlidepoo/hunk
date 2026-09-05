@@ -23,7 +23,7 @@ func write(t *testing.T, dir, name, content string) string {
 // generateAndParse exercises the real pipeline: text in, []File out.
 func generateAndParse(t *testing.T, a, b string) []File {
 	t.Helper()
-	text, err := Generate(a, b)
+	text, err := Generate(a, b, DefaultContext)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestGenerateDirsIdentical(t *testing.T) {
 	write(t, oldDir, "a/b/c.txt", "hello\n")
 	write(t, newDir, "a/b/c.txt", "hello\n")
 
-	text, err := Generate(oldDir, newDir)
+	text, err := Generate(oldDir, newDir, DefaultContext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestGenerateDirsSkipsGitDir(t *testing.T) {
 	write(t, oldDir, ".git/config", "old\n")
 	write(t, newDir, ".git/config", "new\n")
 
-	text, err := Generate(oldDir, newDir)
+	text, err := Generate(oldDir, newDir, DefaultContext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestGenerateMismatchedKinds(t *testing.T) {
 	dir := t.TempDir()
 	f := write(t, dir, "file.txt", "x\n")
 
-	_, err := Generate(dir, f)
+	_, err := Generate(dir, f, DefaultContext)
 	if err == nil {
 		t.Fatal("want an error diffing a directory against a file")
 	}
@@ -196,7 +196,7 @@ func TestGenerateMissingPath(t *testing.T) {
 	dir := t.TempDir()
 	a := write(t, dir, "a.txt", "x\n")
 
-	if _, err := Generate(a, filepath.Join(dir, "nope.txt")); err == nil {
+	if _, err := Generate(a, filepath.Join(dir, "nope.txt"), DefaultContext); err == nil {
 		t.Fatal("want an error for a missing path")
 	}
 }

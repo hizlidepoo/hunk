@@ -86,6 +86,10 @@ type Model struct {
 	typed       string
 	search      string
 
+	// context is how many unchanged lines surround each hunk (git's -U). + and -
+	// re-diff with more or less. Git review mode only, since it re-sources.
+	context int
+
 	// clock, lastMark and lastMarkAt tell a held space bar from a deliberate
 	// second press. clock is a field so tests do not have to sleep.
 	clock      func() time.Time
@@ -112,10 +116,15 @@ type Options struct {
 	Unified   bool // -u: open unified instead of side-by-side
 	NoSidebar bool // --no-sidebar: open with the file sidebar hidden
 	NoFollow  bool // --no-follow: open with live-follow paused
+	Context   int  // --context: unchanged lines around each hunk (0 falls back to the default)
 }
 
 // New builds a model over an already-parsed diff.
 func New(files []diff.File, t *theme.Theme, opts Options) *Model {
+	context := opts.Context
+	if context <= 0 {
+		context = diff.DefaultContext
+	}
 	m := &Model{
 		files:       files,
 		st:          newStyles(t),
@@ -123,6 +132,7 @@ func New(files []diff.File, t *theme.Theme, opts Options) *Model {
 		wantSidebar: !opts.NoSidebar,
 		builtSplit:  !opts.Unified,
 		ignoreWS:    opts.IgnoreWS,
+		context:     context,
 		clock:       time.Now,
 		lastMark:    [2]int{-1, -1},
 	}
@@ -345,6 +355,10 @@ func (m *Model) command(key string) tea.Cmd {
 		return m.toggleFollow()
 	case "i":
 		m.toggleIgnoreWS()
+	case "+", "=":
+		m.changeContext(1)
+	case "-":
+		m.changeContext(-1)
 	case "?":
 		m.showHelp = true
 
@@ -373,6 +387,25 @@ func (m *Model) toggleFollow() tea.Cmd {
 		m.msg = "following resumed"
 	}
 	return m.watch.wait()
+}
+
+// maxContext caps how far + will widen the context. Past this a "diff" is just
+// the whole file twice.
+const maxContext = 20
+
+// changeContext widens or narrows the unchanged lines around each hunk and
+// re-diffs. Git review mode only, since it is the only source hunk can re-run.
+func (m *Model) changeContext(delta int) {
+	if !m.staging() {
+		return
+	}
+	next := clamp(m.context+delta, 0, maxContext)
+	if next == m.context {
+		return
+	}
+	m.context = next
+	m.liveReload()
+	m.msg = "context: " + plural(m.context, "line")
 }
 
 // toggleIgnoreWS flips whitespace-only changes on and off by re-running the
@@ -1267,8 +1300,11 @@ func (m *Model) renderStatus() string {
 		if m.ignoreWS {
 			left += "  ·  ≈ ws"
 		}
-		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "/"}, {key: "?"}, {key: "q"}}
-		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "/ search", "? help", "q quit"}
+		if m.context != diff.DefaultContext {
+			left += fmt.Sprintf("  ·  ⋯ %d", m.context)
+		}
+		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "+"}, {key: "/"}, {key: "?"}, {key: "q"}}
+		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "+/- ctx", "/ search", "? help", "q quit"}
 	}
 
 	right := strings.Join(labels, "  ") + " "
@@ -1317,6 +1353,7 @@ func (m *Model) renderHelp() string {
 			[2]string{"u", "undo the last stage"},
 			[2]string{"f", "pause / resume following file changes"},
 			[2]string{"i", "ignore / show whitespace-only changes"},
+			[2]string{"+ / -", "more / less context around each hunk"},
 		)
 	}
 
