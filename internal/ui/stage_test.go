@@ -111,7 +111,7 @@ func gitModelOpts(t *testing.T, committed, edited map[string]string, opts Option
 	}
 
 	repo := &git.Repo{Dir: dir}
-	text, err := GitSource(repo, false)
+	text, err := GitSource(repo, false, diff.DefaultContext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestMarkedCurrentHunkStaysGreenUnderCursor(t *testing.T) {
 }
 
 func TestOptionsSetStartingState(t *testing.T) {
-	m := New(nil, theme.Default(), Options{Unified: true, NoSidebar: true, IgnoreWS: true})
+	m := New(nil, theme.Default(), Options{Unified: true, NoSidebar: true, IgnoreWS: true, Context: 7})
 	if m.wantSplit {
 		t.Error("Unified should open in unified, not split")
 	}
@@ -359,6 +359,41 @@ func TestOptionsSetStartingState(t *testing.T) {
 	}
 	if !m.ignoreWS {
 		t.Error("IgnoreWS should open with whitespace ignored")
+	}
+	if m.context != 7 {
+		t.Errorf("Context = %d, want 7", m.context)
+	}
+	// A zero Context falls back to the default rather than showing no context.
+	if d := New(nil, theme.Default(), Options{}); d.context != diff.DefaultContext {
+		t.Errorf("default context = %d, want %d", d.context, diff.DefaultContext)
+	}
+}
+
+func TestContextKeysRediff(t *testing.T) {
+	// A change in the middle of a long file, so context lines are plentiful.
+	base := lines(40)
+	m, _ := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": replaceLine(base, 20, "CHANGED")})
+
+	if m.context != diff.DefaultContext {
+		t.Fatalf("start context = %d, want %d", m.context, diff.DefaultContext)
+	}
+	wide := len(m.view.Rows)
+
+	m.handleKey(keyPress("-"))
+	if m.context != diff.DefaultContext-1 {
+		t.Fatalf("- gave context %d", m.context)
+	}
+	if len(m.view.Rows) >= wide {
+		t.Errorf("less context should mean fewer rows: %d -> %d", wide, len(m.view.Rows))
+	}
+	if !strings.Contains(m.msg, "context:") {
+		t.Errorf("status = %q", m.msg)
+	}
+
+	m.handleKey(keyPress("+"))
+	m.handleKey(keyPress("+"))
+	if m.context != diff.DefaultContext+1 {
+		t.Errorf("+ gave context %d, want %d", m.context, diff.DefaultContext+1)
 	}
 }
 

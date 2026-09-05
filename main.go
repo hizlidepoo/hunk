@@ -50,6 +50,8 @@ func run() error {
 	flag.BoolVar(unified, "u", false, "shorthand for -unified")
 	noSidebar := flag.Bool("no-sidebar", false, "open with the file sidebar hidden")
 	noFollow := flag.Bool("no-follow", false, "open with live-follow paused (git review mode)")
+	context := flag.Int("context", diff.DefaultContext, "unchanged lines shown around each hunk")
+	flag.IntVar(context, "U", diff.DefaultContext, "shorthand for -context")
 	flag.Parse()
 
 	th := loadTheme(*themeRef, *themeUpdate)
@@ -58,9 +60,10 @@ func run() error {
 		Unified:   *unified,
 		NoSidebar: *noSidebar,
 		NoFollow:  *noFollow,
+		Context:   *context,
 	}
 
-	repo, text, err := source(flag.Args(), opts.IgnoreWS)
+	repo, text, err := source(flag.Args(), opts.IgnoreWS, opts.Context)
 	if err != nil {
 		return err
 	}
@@ -98,7 +101,7 @@ func loadTheme(ref string, refresh bool) *theme.Theme {
 
 // source produces unified diff text from wherever this invocation gets it. A
 // non-nil repo means the diff came from a working tree hunk may stage into.
-func source(args []string, ignoreWS bool) (*git.Repo, string, error) {
+func source(args []string, ignoreWS bool, context int) (*git.Repo, string, error) {
 	switch len(args) {
 	case 0:
 		// A pipe is a diff to read; a terminal means the user ran hunk on its
@@ -115,11 +118,11 @@ func source(args []string, ignoreWS bool) (*git.Repo, string, error) {
 		}
 		// A clean working tree is not an error: hunk follows the tree live, so
 		// it opens empty and fills in as soon as something is edited.
-		text, err := ui.GitSource(repo, ignoreWS)
+		text, err := ui.GitSource(repo, ignoreWS, context)
 		return repo, text, err
 
 	case 2:
-		text, err := diff.Generate(args[0], args[1])
+		text, err := diff.Generate(args[0], args[1], context)
 		return nil, text, err
 
 	default:

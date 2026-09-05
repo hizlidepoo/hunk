@@ -12,6 +12,10 @@ import (
 	"github.com/aymanbagabas/go-udiff"
 )
 
+// DefaultContext is how many unchanged lines surround a hunk by default — git's
+// -U3.
+const DefaultContext = 3
+
 // binarySniff is how much of a file we look at to decide it is binary. Same
 // heuristic git uses: a NUL byte near the start means "not text".
 const binarySniff = 8000
@@ -21,7 +25,7 @@ const binarySniff = 8000
 // ponytail: generate-then-reparse. Producing text and handing it straight back
 // to Parse keeps one interpretation of a diff in the codebase instead of two.
 // Swap in a direct []File builder only if profiling says this matters.
-func Generate(oldPath, newPath string) (string, error) {
+func Generate(oldPath, newPath string, contextLines int) (string, error) {
 	oldInfo, err := os.Stat(oldPath)
 	if err != nil {
 		return "", err
@@ -35,7 +39,7 @@ func Generate(oldPath, newPath string) (string, error) {
 		return "", fmt.Errorf("cannot diff a file against a directory: %s, %s", oldPath, newPath)
 	}
 	if oldInfo.IsDir() {
-		return generateDirs(oldPath, newPath)
+		return generateDirs(oldPath, newPath, contextLines)
 	}
 
 	oldData, err := os.ReadFile(oldPath)
@@ -46,7 +50,7 @@ func Generate(oldPath, newPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filePatch(diffName(oldPath), diffName(newPath), oldData, newData, true, true), nil
+	return filePatch(diffName(oldPath), diffName(newPath), oldData, newData, true, true, contextLines), nil
 }
 
 // diffName turns a path into the name used inside diff headers. Git writes
@@ -56,7 +60,7 @@ func diffName(path string) string {
 	return strings.TrimPrefix(filepath.ToSlash(path), "/")
 }
 
-func generateDirs(oldRoot, newRoot string) (string, error) {
+func generateDirs(oldRoot, newRoot string, contextLines int) (string, error) {
 	oldFiles, err := walk(oldRoot)
 	if err != nil {
 		return "", err
@@ -82,14 +86,15 @@ func generateDirs(oldRoot, newRoot string) (string, error) {
 				return "", err
 			}
 		}
-		out.WriteString(filePatch(rel, rel, oldData, newData, inOld, inNew))
+		out.WriteString(filePatch(rel, rel, oldData, newData, inOld, inNew, contextLines))
 	}
 	return out.String(), nil
 }
 
-// filePatch renders one file's changes. inOld/inNew say whether the file exists
-// on that side, which is what turns a diff into an add or a delete.
-func filePatch(oldName, newName string, oldData, newData []byte, inOld, inNew bool) string {
+// filePatch renders one file's changes with contextLines of context around each
+// hunk. inOld/inNew say whether the file exists on that side, which is what
+// turns a diff into an add or a delete.
+func filePatch(oldName, newName string, oldData, newData []byte, inOld, inNew bool, contextLines int) string {
 	if inOld && inNew && bytes.Equal(oldData, newData) {
 		return ""
 	}
@@ -115,8 +120,9 @@ func filePatch(oldName, newName string, oldData, newData []byte, inOld, inNew bo
 			fmt.Sprintf("Binary files %s and %s differ\n", oldLabel, newLabel)
 	}
 
-	body := udiff.Unified(oldLabel, newLabel, string(oldData), string(newData))
-	if body == "" {
+	edits := udiff.Strings(string(oldData), string(newData))
+	body, err := udiff.ToUnified(oldLabel, newLabel, string(oldData), edits, contextLines)
+	if err != nil || body == "" {
 		return ""
 	}
 	return header + body
@@ -173,5 +179,6 @@ func union(a, b map[string]struct{}) []string {
 // NewFilePatch renders an untracked file as an add-everything patch, so a file
 // git has never seen can be reviewed and staged like any other change.
 func NewFilePatch(path string, content []byte) string {
-	return filePatch(path, path, nil, content, false, true)
+	// An untracked file is all additions; there are no context lines to size.
+	return filePatch(path, path, nil, content, false, true, DefaultContext)
 }

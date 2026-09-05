@@ -85,6 +85,7 @@ In working-tree review mode you also get:
 | `u` | undo the last stage |
 | `f` | pause / resume following the working tree |
 | `i` | ignore / show whitespace-only changes |
+| `+` / `-` | more / less context around each hunk |
 
 Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.
