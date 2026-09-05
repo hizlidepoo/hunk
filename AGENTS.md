@@ -1,8 +1,9 @@
 # AGENTS.md
 
-Working notes for AI coding agents in this repository. Keep this file accurate:
-if you change the layout, the conventions, or a command below, update it in the
-same commit. Do not add advice here that is not specific to hunk.
+Conventions, guardrails, and patterns for AI coding agents in this repository.
+This file is not a map of the code — it does not track the file structure, and
+adding a file is not a reason to edit it. Update it when a convention, rule, or
+command changes. Keep advice specific to hunk.
 
 ## What hunk is
 
@@ -51,71 +52,26 @@ go run . --theme paper                # the light theme
 write to the index. **Never run that against this repository while working in
 it.** Use `mktemp -d` and a throwaway `git init` — that is what the tests do.
 
-## Layout
+## Architecture invariants
 
-```
-main.go                       flags, mode dispatch, non-TTY passthrough
-internal/diff/                everything about diffs, no terminal code
-  model.go                    File, Hunk, Line, Kind, Range
-  parse.go                    unified diff text -> []File   (go-gitdiff)
-  generate.go                 two paths -> unified diff text (go-udiff)
-  intraline.go                word-level ranges for a paired line
-  patch.go                    File.Patch: selected hunks -> a patch git can apply
-internal/theme/               TOML themes, local and remote
-  theme.go                    schema, Decode, Validate
-  resolve.go                  reference resolution, GitHub fetch, cache
-  builtin/*.toml              the two shipped themes, //go:embed-ed
-internal/git/git.go           os/exec wrappers; the only place hunk shells out
-internal/ui/                  everything about the terminal, no git logic
-  layout.go                   []File -> []Row + navigation indexes (pure)
-  style.go                    theme -> Lip Gloss styles, tab expansion, fitting
-  model.go                    Bubble Tea model: state, keys, rendering
-  stage.go                    marks, staging, working-tree reading
-testdata/*.diff               parser fixtures (binary.diff came from real git)
-testdata/tree_a, tree_b       fixture trees for directory diffing
-```
+These are the load-bearing shapes — the reasons the code is arranged the way it
+is. Package boundaries and layer rules live under Conventions.
 
-## How it fits together
-
-**Everything becomes unified diff text, then is parsed once.**
-
-```
-stdin ──────────────────────────────┐
-two paths ─> diff.Generate ─────────┼─> diff.ParseString ─> []diff.File ─> ui
-git diff + untracked ─> ui.GitSource┘
-```
-
-`diff.Generate` produces text and hands it straight back to the parser. That is
-deliberate: one interpretation of a diff instead of two, and the file/directory
-path is covered by the same parser tests as the stdin path.
-
-`ui.Build(files, split)` flattens every file into one `[]Row`, so scrolling,
-windowing, and next/prev are index arithmetic. Split and unified are *different
-row lists* — a changed line is one row in split, two in unified — so toggling
-`s` rebuilds the view and re-seeks to the same file.
-
-`Build` also wraps every run of changed rows in a block outline: `wrapBlocks`
-brackets the run with a `RowBlockTop` and a `RowBlockBottom` and gives every row
-a `BoxPart` per pane (`BoxNone`/`Top`/`Mid`/`Bottom`). Each pane closes on its
-own last changed line, so a pane's closing rule can land on a row where the
-other pane still has text — that is how one line becoming four draws a short box
-facing a tall one. Inside a block there is no divider between the columns:
-`Model.divider` draws whatever the outline does on that row — the rule sweeping
-across, the turn down into the taller pane, that pane's wall, the corner where
-it closes — so a block reads as one shape. `Row.Arrow` marks the row carrying
-the `→` on that seam. `Model.divider` turns the two parts into the seam glyph, and
-It runs per hunk, before the rows
-are appended, so the row indexes in `FileRows`/`HunkRows` stay correct. Every
-row reserves the two outermost columns for the outline, boxed or not — otherwise
-text would shift sideways between a context line and a change.
-
-`ui.accent` is the single highlight color: hunk header, current-hunk rail, block
-outline, status bar, selected file. Adding a second highlight color means asking
-whether it should be the accent instead.
-
-Only the visible rows are ever rendered (`renderBody`). Do not replace this with
-`bubbles/viewport`: it renders the whole diff into one string, which is exactly
-the wrong shape for the 20k-line diffs hunk exists for.
+- **Everything becomes unified diff text, then is parsed once.** stdin,
+  `diff.Generate` (two paths), and `ui.GitSource` (working tree) all feed
+  `diff.ParseString` → `[]diff.File`. One interpretation of a diff, one set of
+  parser tests. `diff.Generate` deliberately produces text and hands it straight
+  back to the parser rather than building `[]File` directly.
+- **`ui.Build(files, split)` flattens every file into one `[]Row`**, so
+  scrolling, windowing, and next/prev are index arithmetic. Split and unified
+  are *different row lists* — a changed line is one row in split, two in unified
+  — so toggling rebuilds the view and re-seeks to the same file.
+- **Only visible rows are ever rendered (`renderBody`).** Do not replace this
+  with `bubbles/viewport`: it renders the whole diff into one string, exactly the
+  wrong shape for the 20k-line diffs hunk exists for.
+- **`ui.accent` is the single highlight color** (hunk header, current-hunk rail,
+  block outline, status bar, selected file). A second highlight color means first
+  asking whether it should be the accent instead.
 
 ## Conventions
 
