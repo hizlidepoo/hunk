@@ -69,6 +69,7 @@ Output that is piped or redirected is passed through as plain unified diff, so
 | `g` / `G` | top / bottom |
 | `/` | search the diff; `n` / `N` repeat, `esc` clears |
 | `W` | show / hide whitespace (tabs, trailing spaces) |
+| `H` | toggle syntax highlighting |
 | `F` | filter out hunks matching a regex; empty clears |
 | `h` / `l`, ← / → | scroll sideways |
 | `s` | toggle side-by-side / unified |

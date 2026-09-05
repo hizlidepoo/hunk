@@ -15,8 +15,11 @@ import (
 // color string ("#rgb" or "#rrggbb"); the UI converts them to terminal colors.
 type Theme struct {
 	Name string `toml:"name"`
-	UI   UI     `toml:"ui"`
-	Diff Diff   `toml:"diff"`
+	// Syntax is the chroma style name used for syntax highlighting. It is not a
+	// color, so it sits outside UI/Diff and is skipped by the hex validation.
+	Syntax string `toml:"syntax"`
+	UI     UI     `toml:"ui"`
+	Diff   Diff   `toml:"diff"`
 }
 
 // UI colors the frame: panes, headers, sidebar, status bar.

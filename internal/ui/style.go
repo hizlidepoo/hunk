@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -102,12 +103,12 @@ func (s styles) lineStyles(k diff.Kind) (line, word lipgloss.Style) {
 }
 
 // expandTabs replaces tabs with spaces and moves the highlight ranges to match.
-func expandTabs(text string, ranges []diff.Range, showWS bool) (string, []diff.Range) {
+func expandTabs(text string, ranges []diff.Range, spans []synSpan, showWS bool) (string, []diff.Range, []synSpan) {
 	if !strings.ContainsRune(text, '\t') {
 		if showWS {
-			return markTrailingSpaces(text), ranges
+			return markTrailingSpaces(text), ranges, spans
 		}
-		return text, ranges
+		return text, ranges, spans
 	}
 
 	// shift[i] is where byte i of the original text lands in the expanded one.
@@ -141,11 +142,18 @@ func expandTabs(text string, ranges []diff.Range, showWS bool) (string, []diff.R
 		}
 		moved = append(moved, diff.Range{Start: shift[r.Start], End: shift[r.End]})
 	}
+	movedSpans := make([]synSpan, 0, len(spans))
+	for _, s := range spans {
+		if s.start > len(text) || s.end > len(text) {
+			continue
+		}
+		movedSpans = append(movedSpans, synSpan{start: shift[s.start], end: shift[s.end], fg: s.fg})
+	}
 	out := b.String()
 	if showWS {
 		out = markTrailingSpaces(out)
 	}
-	return out, moved
+	return out, moved, movedSpans
 }
 
 const (
@@ -187,6 +195,81 @@ func styleText(text string, ranges []diff.Range, line, word lipgloss.Style) stri
 	return b.String()
 }
 
+// paintSyntax paints a line with the foreground coming from the syntax spans and
+// the background/emphasis from the diff: a segment inside a changed range keeps
+// the stronger word style, everything else the line style, and either way the
+// syntax color overrides the foreground where a span covers it. Segments without
+// a span fall back to the diff foreground, so an added line with no lexer still
+// reads green.
+func paintSyntax(text string, ranges []diff.Range, spans []synSpan, line, word lipgloss.Style) string {
+	// Cut points at every range and span edge, so each segment is uniformly
+	// inside/outside a change and under at most one span.
+	cuts := []int{0, len(text)}
+	for _, r := range ranges {
+		cuts = append(cuts, clampCut(r.Start, len(text)), clampCut(r.End, len(text)))
+	}
+	for _, s := range spans {
+		cuts = append(cuts, clampCut(s.start, len(text)), clampCut(s.end, len(text)))
+	}
+	sort.Ints(cuts)
+
+	var b strings.Builder
+	for i := 0; i+1 < len(cuts); i++ {
+		a, e := cuts[i], cuts[i+1]
+		if a >= e {
+			continue
+		}
+		st := line
+		if covered(a, ranges) {
+			st = word
+		}
+		if fg := spanFg(a, spans); fg != "" {
+			st = st.Foreground(lipgloss.Color(fg))
+		}
+		b.WriteString(st.Render(text[a:e]))
+	}
+	return b.String()
+}
+
+func clampCut(v, max int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func covered(pos int, ranges []diff.Range) bool {
+	for _, r := range ranges {
+		if r.Start <= pos && pos < r.End {
+			return true
+		}
+	}
+	return false
+}
+
+func spanFg(pos int, spans []synSpan) string {
+	for _, s := range spans {
+		if s.start <= pos && pos < s.end {
+			return s.fg
+		}
+	}
+	return ""
+}
+
+func shiftSpans(spans []synSpan, by int) []synSpan {
+	if by == 0 || len(spans) == 0 {
+		return spans
+	}
+	out := make([]synSpan, len(spans))
+	for i, s := range spans {
+		out[i] = synSpan{start: s.start + by, end: s.end + by, fg: s.fg}
+	}
+	return out
+}
+
 // fit slices a styled string to a horizontal window and pads it out to width,
 // counting terminal cells rather than bytes so wide runes stay aligned.
 func fit(styled string, hscroll, width int, pad lipgloss.Style) string {
@@ -205,7 +288,7 @@ func fit(styled string, hscroll, width int, pad lipgloss.Style) string {
 }
 
 // renderSide renders one column of a row: the line number gutter and the text.
-func (s styles) renderSide(side Side, sign string, numWidth, textWidth, hscroll int, showWS bool) string {
+func (s styles) renderSide(side Side, sign string, numWidth, textWidth, hscroll int, showWS bool, highlight func(string) []synSpan) string {
 	lineStyle, wordStyle := s.lineStyles(side.Kind)
 	if textWidth <= 0 {
 		return "" // no room for this column at all; the caller pads the row
@@ -230,8 +313,18 @@ func (s styles) renderSide(side Side, sign string, numWidth, textWidth, hscroll 
 	}
 	gutter := numStyle.Render(padLeft(num, numWidth) + " ")
 
-	text, ranges := expandTabs(side.Text, side.Ranges, showWS)
-	body := styleText(sign+text, shiftRanges(ranges, len(sign)), lineStyle, wordStyle)
+	var spans []synSpan
+	if highlight != nil {
+		spans = highlight(side.Text)
+	}
+	text, ranges, spans := expandTabs(side.Text, side.Ranges, spans, showWS)
+
+	var body string
+	if len(spans) == 0 {
+		body = styleText(sign+text, shiftRanges(ranges, len(sign)), lineStyle, wordStyle)
+	} else {
+		body = paintSyntax(sign+text, shiftRanges(ranges, len(sign)), shiftSpans(spans, len(sign)), lineStyle, wordStyle)
+	}
 	return gutter + fit(body, hscroll, textWidth, lineStyle)
 }
 

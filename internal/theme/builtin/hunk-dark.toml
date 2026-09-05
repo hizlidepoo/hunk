@@ -5,6 +5,9 @@
 
 name = "hunk-dark"
 
+# Syntax highlighting palette: any chroma style name (https://xyproto.github.io/splash/docs/).
+syntax = "github-dark"
+
 [ui]
 background          = "#1a1b26"
 foreground          = "#c0caf5"

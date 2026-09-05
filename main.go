@@ -55,6 +55,7 @@ func run() error {
 	flag.IntVar(context, "U", diff.DefaultContext, "shorthand for -context")
 	showWS := flag.Bool("show-whitespace", false, "render tabs and trailing spaces as visible marks")
 	filter := flag.String("filter", "", "hide hunks whose every changed line matches this regex")
+	noSyntax := flag.Bool("no-syntax", false, "open with syntax highlighting off")
 	flag.Parse()
 
 	if *filter != "" {
@@ -72,6 +73,7 @@ func run() error {
 		Context:   *context,
 		ShowWS:    *showWS,
 		Filter:    *filter,
+		NoSyntax:  *noSyntax,
 	}
 
 	repo, text, err := source(flag.Args(), opts.IgnoreWS, opts.Context)
