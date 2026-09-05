@@ -78,8 +78,9 @@ func (s fileState) symbol() string {
 
 // GitSource reads the working tree: unstaged changes plus untracked files,
 // rendered as one unified diff so review mode has nothing special about it.
-func GitSource(r *git.Repo) (string, error) {
-	text, err := r.Diff()
+// ignoreWS drops whitespace-only changes from the tracked diffs.
+func GitSource(r *git.Repo, ignoreWS bool) (string, error) {
+	text, err := r.Diff(ignoreWS)
 	if err != nil {
 		return "", err
 	}
@@ -125,7 +126,7 @@ func GitSource(r *git.Repo) (string, error) {
 			stagedOnly = append(stagedOnly, path)
 		}
 	}
-	stagedDiff, err := r.StagedDiff(stagedOnly)
+	stagedDiff, err := r.StagedDiff(stagedOnly, ignoreWS)
 	if err != nil {
 		return "", err
 	}
@@ -259,7 +260,7 @@ func (m *Model) liveReload() {
 	where := m.cursorIdentity()
 	snap := m.snapshotMarks()
 
-	text, err := GitSource(m.repo)
+	text, err := GitSource(m.repo, m.ignoreWS)
 	if err != nil {
 		m.msg = "reload failed: " + firstLine(err.Error())
 		return
@@ -284,7 +285,7 @@ func (m *Model) liveReload() {
 // reload re-reads the working tree after staging, so what is on screen is what
 // is still unstaged.
 func (m *Model) reload() error {
-	text, err := GitSource(m.repo)
+	text, err := GitSource(m.repo, m.ignoreWS)
 	if err != nil {
 		return err
 	}

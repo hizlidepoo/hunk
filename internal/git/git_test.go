@@ -72,7 +72,7 @@ func gitOut(t *testing.T, r *git.Repo, args ...string) string {
 func stage(t *testing.T, r *git.Repo, pick func(path string, hunk int) bool) {
 	t.Helper()
 
-	text, err := r.Diff()
+	text, err := r.Diff(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestDiffSeesWorkingTreeChanges(t *testing.T) {
 	r := repo(t, map[string]string{"a.txt": base})
 	writeFile(t, r.Dir, "a.txt", change(base, 5, "CHANGED"))
 
-	text, err := r.Diff()
+	text, err := r.Diff(false)
 	if err != nil {
 		t.Fatal(err)
 	}

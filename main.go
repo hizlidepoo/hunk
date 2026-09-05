@@ -100,7 +100,7 @@ func source(args []string) (*git.Repo, string, error) {
 		}
 		// A clean working tree is not an error: hunk follows the tree live, so
 		// it opens empty and fills in as soon as something is edited.
-		text, err := ui.GitSource(repo)
+		text, err := ui.GitSource(repo, false)
 		return repo, text, err
 
 	case 2:
