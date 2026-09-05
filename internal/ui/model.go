@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -77,6 +78,13 @@ type Model struct {
 	// ignoreWS re-diffs with git's -w, hiding whitespace-only changes. Only the
 	// git review mode can honour it, since it is the only source hunk can re-run.
 	ignoreWS bool
+
+	// Search, vim-style. searchInput is true while the / prompt is open; typed
+	// is the query being edited; search is the confirmed query that n / N repeat
+	// and esc clears.
+	searchInput bool
+	typed       string
+	search      string
 
 	// clock, lastMark and lastMarkAt tell a held space bar from a deliberate
 	// second press. clock is a field so tests do not have to sleep.
@@ -261,6 +269,12 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// While the / prompt is open, keys edit the query, not the diff.
+	if m.searchInput {
+		m.searchKey(msg)
+		return m, nil
+	}
+
 	// A keystroke means the last result has been read.
 	m.msg = ""
 
@@ -287,8 +301,22 @@ func (m *Model) command(key string) tea.Cmd {
 	case "G", "end":
 		m.moveTo(len(m.view.Rows) - 1)
 
+	case "/":
+		m.searchInput, m.typed = true, ""
 	case "n":
-		m.moveTo(NextIndex(m.view.HunkRows, m.cur))
+		// When a search is active, n repeats it (vim); otherwise it is the next
+		// hunk, as always.
+		if m.search != "" {
+			m.jumpMatch(1)
+		} else {
+			m.moveTo(NextIndex(m.view.HunkRows, m.cur))
+		}
+	case "N":
+		if m.search != "" {
+			m.jumpMatch(-1)
+		}
+	case "esc":
+		m.search = ""
 	case "p":
 		m.moveTo(PrevIndex(m.view.HunkRows, m.cur))
 	case "]":
@@ -360,6 +388,73 @@ func (m *Model) toggleIgnoreWS() {
 	} else {
 		m.msg = "showing whitespace"
 	}
+}
+
+// searchKey edits the / prompt. Enter confirms and jumps to the first match,
+// esc abandons the edit (the previous search stays), backspace deletes.
+func (m *Model) searchKey(msg tea.KeyPressMsg) {
+	switch msg.String() {
+	case "esc":
+		m.searchInput, m.typed = false, ""
+	case "enter":
+		m.searchInput = false
+		m.search = m.typed
+		if m.search != "" {
+			m.jumpMatchFrom(m.cur, 1, true)
+		}
+	case "backspace":
+		if r := []rune(m.typed); len(r) > 0 {
+			m.typed = string(r[:len(r)-1])
+		}
+	default:
+		// Key.Text is non-empty only for printable input, so control keys are
+		// ignored here without a list of names to maintain.
+		m.typed += msg.Key().Text
+	}
+}
+
+// jumpMatch moves to the next (dir 1) or previous (dir -1) row matching the
+// active search, wrapping around the diff.
+func (m *Model) jumpMatch(dir int) { m.jumpMatchFrom(m.cur, dir, false) }
+
+func (m *Model) jumpMatchFrom(from, dir int, inclusive bool) {
+	n := len(m.view.Rows)
+	if n == 0 || m.search == "" {
+		return
+	}
+	start := from
+	if !inclusive {
+		start = from + dir
+	}
+	for i := 0; i < n; i++ {
+		idx := ((start+dir*i)%n + n) % n
+		if matchText(m.rowSearchText(idx), m.search) {
+			m.moveTo(idx)
+			return
+		}
+	}
+	m.msg = "no match: " + m.search
+}
+
+// rowSearchText is everything on a row a search can hit: its header text and
+// both panes.
+func (m *Model) rowSearchText(idx int) string {
+	r := m.view.Rows[idx]
+	return r.Text + " " + r.Left.Text + " " + r.Right.Text
+}
+
+// matchText is smartcase: a lowercase query matches case-insensitively, a query
+// with any uppercase is matched exactly — the same rule vim uses.
+func matchText(hay, needle string) bool {
+	if needle == "" {
+		return false
+	}
+	for _, r := range needle {
+		if unicode.IsUpper(r) {
+			return strings.Contains(hay, needle)
+		}
+	}
+	return strings.Contains(strings.ToLower(hay), needle)
 }
 
 // handleClick routes a left click to whatever is under the pointer: an option
@@ -1113,6 +1208,11 @@ func (m *Model) renderStatus() string {
 	// No hints are clickable unless the option row below actually draws them.
 	m.hints = nil
 
+	// The / prompt takes over the status line while it is open.
+	if m.searchInput {
+		return fit(m.st.statusbar.Render(" /"+m.typed+"█"), 0, m.width, m.st.statusbar)
+	}
+
 	// A message — a confirmation prompt, or the result of staging — replaces the
 	// status line while it is relevant.
 	if m.msg != "" {
@@ -1146,10 +1246,13 @@ func (m *Model) renderStatus() string {
 
 	left := fmt.Sprintf(" %s  +%d -%d  ·  file %d/%d  ·  %s",
 		f.Path(), f.Added, f.Removed, fileIdx+1, len(m.files), mode)
-	opts := []hintZone{
-		{key: "n"}, {key: "]"}, {key: "s"}, {key: "?"}, {key: "q"},
+	if m.search != "" {
+		left += "  ·  /" + m.search
 	}
-	labels := []string{"n/p hunk", "]/[ file", "s split", "? help", "q quit"}
+	opts := []hintZone{
+		{key: "n"}, {key: "]"}, {key: "s"}, {key: "/"}, {key: "?"}, {key: "q"},
+	}
+	labels := []string{"n/p hunk", "]/[ file", "s split", "/ search", "? help", "q quit"}
 	if m.staging() {
 		if hunks, files := m.marks.total(); hunks > 0 {
 			left += fmt.Sprintf("  ·  %s marked in %s", plural(hunks, "hunk"), plural(files, "file"))
@@ -1164,8 +1267,8 @@ func (m *Model) renderStatus() string {
 		if m.ignoreWS {
 			left += "  ·  ≈ ws"
 		}
-		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "?"}, {key: "q"}}
-		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "? help", "q quit"}
+		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "/"}, {key: "?"}, {key: "q"}}
+		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "/ search", "? help", "q quit"}
 	}
 
 	right := strings.Join(labels, "  ") + " "
@@ -1194,6 +1297,8 @@ func (m *Model) renderHelp() string {
 		{"n / p", "next / previous hunk"},
 		{"] / [", "next / previous file"},
 		{"g / G", "top / bottom"},
+		{"/", "search; enter jumps, esc clears"},
+		{"n / N", "next / previous match (while searching)"},
 		{"h / l, ← / →", "scroll sideways"},
 		{"s", "toggle side-by-side / unified"},
 		{"b", "toggle the file sidebar"},

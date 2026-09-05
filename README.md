@@ -67,6 +67,7 @@ Output that is piped or redirected is passed through as plain unified diff, so
 | `n` / `p` | next / previous hunk |
 | `]` / `[` | next / previous file |
 | `g` / `G` | top / bottom |
+| `/` | search the diff; `n` / `N` repeat, `esc` clears |
 | `h` / `l`, ← / → | scroll sideways |
 | `s` | toggle side-by-side / unified |
 | `b` | toggle the file sidebar |
@@ -80,9 +81,10 @@ In working-tree review mode you also get:
 | `space` | mark this hunk and move to the next one in the file |
 | `a` / `d` | mark / unmark, then jump to the next hunk |
 | `A` / `D` | mark / unmark every hunk in this file |
-| `w` | stage what is marked (asks first) |
+| `w` | stage what is marked |
 | `u` | undo the last stage |
 | `f` | pause / resume following the working tree |
+| `i` | ignore / show whitespace-only changes |
 
 Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.
