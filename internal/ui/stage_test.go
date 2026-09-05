@@ -71,6 +71,11 @@ func TestFileState(t *testing.T) {
 // gitModel builds a model over a throwaway repo with the given working-tree
 // edits already applied.
 func gitModel(t *testing.T, committed, edited map[string]string) (*Model, *git.Repo) {
+	return gitModelOpts(t, committed, edited, Options{})
+}
+
+// gitModelOpts is gitModel with explicit startup options.
+func gitModelOpts(t *testing.T, committed, edited map[string]string, opts Options) (*Model, *git.Repo) {
 	t.Helper()
 	if !git.Available() {
 		t.Skip("git is not on PATH")
@@ -115,7 +120,7 @@ func gitModel(t *testing.T, committed, edited map[string]string) (*Model, *git.R
 		t.Fatalf("%v\n%s", err, text)
 	}
 
-	m := NewGit(repo, files, theme.Default())
+	m := NewGit(repo, files, theme.Default(), opts)
 	t.Cleanup(func() { m.watch.Close() }) // stop the follow goroutine started by NewGit
 	u, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 24})
 	return u.(*Model), repo
@@ -341,6 +346,31 @@ func TestMarkedCurrentHunkStaysGreenUnderCursor(t *testing.T) {
 	// A non-cursor row of the same hunk is green too.
 	if got := m.railMark(hlo, hlo, hhi); got != m.st.railMarked.Render("▌") {
 		t.Errorf("marked+current row = %q, want the green marked bar", got)
+	}
+}
+
+func TestOptionsSetStartingState(t *testing.T) {
+	m := New(nil, theme.Default(), Options{Unified: true, NoSidebar: true, IgnoreWS: true})
+	if m.wantSplit {
+		t.Error("Unified should open in unified, not split")
+	}
+	if m.wantSidebar {
+		t.Error("NoSidebar should open with the sidebar hidden")
+	}
+	if !m.ignoreWS {
+		t.Error("IgnoreWS should open with whitespace ignored")
+	}
+}
+
+func TestNoFollowOpensPaused(t *testing.T) {
+	base := "alpha\nbeta\n"
+	m, _ := gitModelOpts(t, map[string]string{"a.txt": base},
+		map[string]string{"a.txt": "alpha\nBETA\n"}, Options{NoFollow: true})
+	if m.live {
+		t.Error("NoFollow should open with live-follow paused")
+	}
+	if m.watch == nil {
+		t.Error("the watcher should still start so f can resume it")
 	}
 }
 

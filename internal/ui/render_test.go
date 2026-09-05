@@ -38,7 +38,7 @@ func newTestModel(t *testing.T, unified string) *Model {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(files, theme.Default())
+	return New(files, theme.Default(), Options{})
 }
 
 func TestRenderFillsTheScreenExactly(t *testing.T) {
@@ -202,7 +202,7 @@ func TestHelpOverlayAndDismissal(t *testing.T) {
 }
 
 func TestEmptyDiffRenders(t *testing.T) {
-	m := New(nil, theme.Default())
+	m := New(nil, theme.Default(), Options{})
 	lines := screen(t, m, 80, 10)
 
 	if len(lines) != 10 {

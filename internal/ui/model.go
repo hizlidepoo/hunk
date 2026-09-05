@@ -96,14 +96,25 @@ type hintZone struct {
 	key    string
 }
 
+// Options are the startup preferences the command-line flags set. Every one
+// has an in-app key that still toggles it during a session; these just pick the
+// state hunk opens in.
+type Options struct {
+	IgnoreWS  bool // -w: open with whitespace-only changes hidden
+	Unified   bool // -u: open unified instead of side-by-side
+	NoSidebar bool // --no-sidebar: open with the file sidebar hidden
+	NoFollow  bool // --no-follow: open with live-follow paused
+}
+
 // New builds a model over an already-parsed diff.
-func New(files []diff.File, t *theme.Theme) *Model {
+func New(files []diff.File, t *theme.Theme, opts Options) *Model {
 	m := &Model{
 		files:       files,
 		st:          newStyles(t),
-		wantSplit:   true,
-		wantSidebar: true,
-		builtSplit:  true,
+		wantSplit:   !opts.Unified,
+		wantSidebar: !opts.NoSidebar,
+		builtSplit:  !opts.Unified,
+		ignoreWS:    opts.IgnoreWS,
 		clock:       time.Now,
 		lastMark:    [2]int{-1, -1},
 	}
@@ -120,8 +131,8 @@ func (m *Model) rebuildView() {
 // NewGit is New for a working tree hunk can stage into. It also starts
 // following the working tree, so edits made while hunk is open show up on their
 // own. A watcher that fails to start just leaves live-follow off.
-func NewGit(repo *git.Repo, files []diff.File, t *theme.Theme) *Model {
-	m := New(files, t)
+func NewGit(repo *git.Repo, files []diff.File, t *theme.Theme, opts Options) *Model {
+	m := New(files, t, opts)
 	m.repo = repo
 	m.marks = marks{}
 	m.refreshGitState()
@@ -132,8 +143,9 @@ func NewGit(repo *git.Repo, files []diff.File, t *theme.Theme) *Model {
 			dir = wd
 		}
 	}
+	// The watcher still starts when following is off, so f can resume it later.
 	if w, err := newWatcher(dir); err == nil {
-		m.watch, m.live = w, true
+		m.watch, m.live = w, !opts.NoFollow
 	}
 	return m
 }
@@ -163,14 +175,14 @@ func (m *Model) refreshGitState() {
 }
 
 // Run puts the model on screen and blocks until the user quits.
-func Run(files []diff.File, t *theme.Theme) error {
-	_, err := tea.NewProgram(New(files, t)).Run()
+func Run(files []diff.File, t *theme.Theme, opts Options) error {
+	_, err := tea.NewProgram(New(files, t, opts)).Run()
 	return err
 }
 
 // RunGit is Run with staging enabled.
-func RunGit(repo *git.Repo, files []diff.File, t *theme.Theme) error {
-	m := NewGit(repo, files, t)
+func RunGit(repo *git.Repo, files []diff.File, t *theme.Theme, opts Options) error {
+	m := NewGit(repo, files, t, opts)
 	defer m.watch.Close() // nil-safe; stops the follow goroutine on quit
 	_, err := tea.NewProgram(m).Run()
 	return err
@@ -1109,6 +1121,9 @@ func (m *Model) renderStatus() string {
 	if len(m.view.Rows) == 0 {
 		if m.staging() {
 			status := " working tree clean"
+			if m.ignoreWS {
+				status += "  ·  ≈ ws"
+			}
 			if m.watch != nil {
 				live := "○ paused"
 				if m.live {

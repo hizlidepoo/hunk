@@ -41,11 +41,26 @@ func run() error {
 	themeRef := flag.String("theme", os.Getenv("HUNK_THEME"),
 		"theme name, path, or github.com/user/repo/name reference")
 	themeUpdate := flag.Bool("theme-update", false, "re-download remote themes instead of using the cache")
+
+	// View filters, each mirroring an in-app toggle. Short forms share the same
+	// variable so -w and -ignore-whitespace are the same flag.
+	ignoreWS := flag.Bool("ignore-whitespace", false, "hide whitespace-only changes (git review mode)")
+	flag.BoolVar(ignoreWS, "w", false, "shorthand for -ignore-whitespace")
+	unified := flag.Bool("unified", false, "open unified instead of side-by-side")
+	flag.BoolVar(unified, "u", false, "shorthand for -unified")
+	noSidebar := flag.Bool("no-sidebar", false, "open with the file sidebar hidden")
+	noFollow := flag.Bool("no-follow", false, "open with live-follow paused (git review mode)")
 	flag.Parse()
 
 	th := loadTheme(*themeRef, *themeUpdate)
+	opts := ui.Options{
+		IgnoreWS:  *ignoreWS,
+		Unified:   *unified,
+		NoSidebar: *noSidebar,
+		NoFollow:  *noFollow,
+	}
 
-	repo, text, err := source(flag.Args())
+	repo, text, err := source(flag.Args(), opts.IgnoreWS)
 	if err != nil {
 		return err
 	}
@@ -62,9 +77,9 @@ func run() error {
 	}
 
 	if repo != nil {
-		return ui.RunGit(repo, files, th)
+		return ui.RunGit(repo, files, th, opts)
 	}
-	return ui.Run(files, th)
+	return ui.Run(files, th, opts)
 }
 
 // loadTheme never fails the run: a broken theme costs you colors, not your diff.
@@ -83,7 +98,7 @@ func loadTheme(ref string, refresh bool) *theme.Theme {
 
 // source produces unified diff text from wherever this invocation gets it. A
 // non-nil repo means the diff came from a working tree hunk may stage into.
-func source(args []string) (*git.Repo, string, error) {
+func source(args []string, ignoreWS bool) (*git.Repo, string, error) {
 	switch len(args) {
 	case 0:
 		// A pipe is a diff to read; a terminal means the user ran hunk on its
@@ -100,7 +115,7 @@ func source(args []string) (*git.Repo, string, error) {
 		}
 		// A clean working tree is not an error: hunk follows the tree live, so
 		// it opens empty and fills in as soon as something is edited.
-		text, err := ui.GitSource(repo, false)
+		text, err := ui.GitSource(repo, ignoreWS)
 		return repo, text, err
 
 	case 2:

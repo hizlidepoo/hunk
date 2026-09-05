@@ -123,6 +123,13 @@ the wrong shape for the 20k-line diffs hunk exists for.
   ceiling and upgrade path. Grep for them to see what has been consciously
   deferred. Add one when you take a shortcut on purpose.
 - **Comments say why, not what.**
+- **A session toggle gets a flag.** Whenever a feature adds an in-app
+  toggle, mode, or filter, expose the same starting state as a command-line flag
+  too when it plausibly makes sense — the key toggles it during a session, the
+  flag picks what hunk opens in. Add it to `ui.Options` (threaded through
+  `Run`/`RunGit`), give it a short and long form, and let it show in `--help`.
+  Example: `-w` / `--ignore-whitespace` mirrors the `i` key; `-u`, `--no-sidebar`,
+  `--no-follow` mirror `s`, `b`, `f`.
 - Everything is under `internal/`. No public API yet.
 - Colors are hex strings in the theme layer; only `internal/ui/style.go` turns
   them into Lip Gloss styles. `internal/theme` does not import Lip Gloss.
