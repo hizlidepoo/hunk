@@ -350,7 +350,7 @@ func TestMarkedCurrentHunkStaysGreenUnderCursor(t *testing.T) {
 }
 
 func TestOptionsSetStartingState(t *testing.T) {
-	m := New(nil, theme.Default(), Options{Unified: true, NoSidebar: true, IgnoreWS: true, Context: 7})
+	m := New(nil, theme.Default(), Options{Unified: true, NoSidebar: true, IgnoreWS: true, Context: 7, ShowWS: true})
 	if m.wantSplit {
 		t.Error("Unified should open in unified, not split")
 	}
@@ -362,6 +362,9 @@ func TestOptionsSetStartingState(t *testing.T) {
 	}
 	if m.context != 7 {
 		t.Errorf("Context = %d, want 7", m.context)
+	}
+	if !m.showWS {
+		t.Error("ShowWS should open with whitespace visible")
 	}
 	// A zero Context falls back to the default rather than showing no context.
 	if d := New(nil, theme.Default(), Options{}); d.context != diff.DefaultContext {

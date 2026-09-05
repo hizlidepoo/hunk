@@ -102,8 +102,11 @@ func (s styles) lineStyles(k diff.Kind) (line, word lipgloss.Style) {
 }
 
 // expandTabs replaces tabs with spaces and moves the highlight ranges to match.
-func expandTabs(text string, ranges []diff.Range) (string, []diff.Range) {
+func expandTabs(text string, ranges []diff.Range, showWS bool) (string, []diff.Range) {
 	if !strings.ContainsRune(text, '\t') {
+		if showWS {
+			return markTrailingSpaces(text), ranges
+		}
 		return text, ranges
 	}
 
@@ -115,7 +118,14 @@ func expandTabs(text string, ranges []diff.Range) (string, []diff.Range) {
 		shift[i] = b.Len()
 		if r == '\t' {
 			pad := tabWidth - col%tabWidth
-			b.WriteString(strings.Repeat(" ", pad))
+			if showWS {
+				// A tab is one arrow cell then spaces out to the tab stop, so it
+				// still occupies exactly pad columns.
+				b.WriteString(tabMarker)
+				b.WriteString(strings.Repeat(" ", pad-1))
+			} else {
+				b.WriteString(strings.Repeat(" ", pad))
+			}
 			col += pad
 			continue
 		}
@@ -131,7 +141,30 @@ func expandTabs(text string, ranges []diff.Range) (string, []diff.Range) {
 		}
 		moved = append(moved, diff.Range{Start: shift[r.Start], End: shift[r.End]})
 	}
-	return b.String(), moved
+	out := b.String()
+	if showWS {
+		out = markTrailingSpaces(out)
+	}
+	return out, moved
+}
+
+const (
+	tabMarker = "→" // shown at the start of an expanded tab when whitespace is visible
+	spaceMark = "·" // shown for each trailing space when whitespace is visible
+)
+
+// markTrailingSpaces replaces the run of spaces at the end of a line with a
+// visible dot each, so trailing whitespace stops hiding. Widths are unchanged:
+// one dot per space.
+func markTrailingSpaces(s string) string {
+	i := len(s)
+	for i > 0 && s[i-1] == ' ' {
+		i--
+	}
+	if i == len(s) {
+		return s
+	}
+	return s[:i] + strings.Repeat(spaceMark, len(s)-i)
 }
 
 // styleText paints a line, with the changed ranges in the emphasis style.
@@ -172,7 +205,7 @@ func fit(styled string, hscroll, width int, pad lipgloss.Style) string {
 }
 
 // renderSide renders one column of a row: the line number gutter and the text.
-func (s styles) renderSide(side Side, sign string, numWidth, textWidth, hscroll int) string {
+func (s styles) renderSide(side Side, sign string, numWidth, textWidth, hscroll int, showWS bool) string {
 	lineStyle, wordStyle := s.lineStyles(side.Kind)
 	if textWidth <= 0 {
 		return "" // no room for this column at all; the caller pads the row
@@ -197,7 +230,7 @@ func (s styles) renderSide(side Side, sign string, numWidth, textWidth, hscroll 
 	}
 	gutter := numStyle.Render(padLeft(num, numWidth) + " ")
 
-	text, ranges := expandTabs(side.Text, side.Ranges)
+	text, ranges := expandTabs(side.Text, side.Ranges, showWS)
 	body := styleText(sign+text, shiftRanges(ranges, len(sign)), lineStyle, wordStyle)
 	return gutter + fit(body, hscroll, textWidth, lineStyle)
 }

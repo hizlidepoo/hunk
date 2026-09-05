@@ -90,6 +90,10 @@ type Model struct {
 	// re-diff with more or less. Git review mode only, since it re-sources.
 	context int
 
+	// showWS renders tabs and trailing spaces as visible marks. It is purely a
+	// rendering choice — no re-diff — so it works in every mode.
+	showWS bool
+
 	// clock, lastMark and lastMarkAt tell a held space bar from a deliberate
 	// second press. clock is a field so tests do not have to sleep.
 	clock      func() time.Time
@@ -117,6 +121,7 @@ type Options struct {
 	NoSidebar bool // --no-sidebar: open with the file sidebar hidden
 	NoFollow  bool // --no-follow: open with live-follow paused
 	Context   int  // --context: unchanged lines around each hunk (0 falls back to the default)
+	ShowWS    bool // --show-whitespace: render tabs and trailing spaces as marks
 }
 
 // New builds a model over an already-parsed diff.
@@ -133,6 +138,7 @@ func New(files []diff.File, t *theme.Theme, opts Options) *Model {
 		builtSplit:  !opts.Unified,
 		ignoreWS:    opts.IgnoreWS,
 		context:     context,
+		showWS:      opts.ShowWS,
 		clock:       time.Now,
 		lastMark:    [2]int{-1, -1},
 	}
@@ -359,6 +365,13 @@ func (m *Model) command(key string) tea.Cmd {
 		m.changeContext(1)
 	case "-":
 		m.changeContext(-1)
+	case "W":
+		m.showWS = !m.showWS
+		if m.showWS {
+			m.msg = "showing whitespace"
+		} else {
+			m.msg = "hiding whitespace"
+		}
 	case "?":
 		m.showHelp = true
 
@@ -1068,10 +1081,10 @@ func (m *Model) renderRow(r Row, w int, focus bool) string {
 
 	half := (inner - 1) / 2
 	left := m.paneOr(r.BoxLeft, half, func() string {
-		return m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll)
+		return m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll, m.showWS)
 	})
 	right := m.paneOr(r.BoxRight, inner-half-1, func() string {
-		return m.st.renderSide(r.Right, "", numWidth, inner-half-1-numWidth-1, m.hscroll)
+		return m.st.renderSide(r.Right, "", numWidth, inner-half-1-numWidth-1, m.hscroll, m.showWS)
 	})
 	return lead + left + m.divider(r) + right + trail
 }
@@ -1161,7 +1174,7 @@ func (m *Model) renderUnifiedRow(r Row, w int) string {
 	} else if r.Left.Kind == diff.Added {
 		sign = "+"
 	}
-	return m.st.renderSide(side, sign, numWidth, w-numWidth-1, m.hscroll)
+	return m.st.renderSide(side, sign, numWidth, w-numWidth-1, m.hscroll, m.showWS)
 }
 
 // renderSidebar lists the changed files, or nil when there is no room for it.
@@ -1282,10 +1295,13 @@ func (m *Model) renderStatus() string {
 	if m.search != "" {
 		left += "  ·  /" + m.search
 	}
-	opts := []hintZone{
-		{key: "n"}, {key: "]"}, {key: "s"}, {key: "/"}, {key: "?"}, {key: "q"},
+	if m.showWS {
+		left += "  ·  ·→"
 	}
-	labels := []string{"n/p hunk", "]/[ file", "s split", "/ search", "? help", "q quit"}
+	opts := []hintZone{
+		{key: "n"}, {key: "]"}, {key: "s"}, {key: "/"}, {key: "W"}, {key: "?"}, {key: "q"},
+	}
+	labels := []string{"n/p hunk", "]/[ file", "s split", "/ search", "W space", "? help", "q quit"}
 	if m.staging() {
 		if hunks, files := m.marks.total(); hunks > 0 {
 			left += fmt.Sprintf("  ·  %s marked in %s", plural(hunks, "hunk"), plural(files, "file"))
@@ -1303,8 +1319,8 @@ func (m *Model) renderStatus() string {
 		if m.context != diff.DefaultContext {
 			left += fmt.Sprintf("  ·  ⋯ %d", m.context)
 		}
-		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "+"}, {key: "/"}, {key: "?"}, {key: "q"}}
-		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "+/- ctx", "/ search", "? help", "q quit"}
+		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "+"}, {key: "W"}, {key: "/"}, {key: "?"}, {key: "q"}}
+		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "+/- ctx", "W space", "/ search", "? help", "q quit"}
 	}
 
 	right := strings.Join(labels, "  ") + " "
@@ -1335,6 +1351,7 @@ func (m *Model) renderHelp() string {
 		{"g / G", "top / bottom"},
 		{"/", "search; enter jumps, esc clears"},
 		{"n / N", "next / previous match (while searching)"},
+		{"W", "show / hide whitespace (tabs, trailing spaces)"},
 		{"h / l, ← / →", "scroll sideways"},
 		{"s", "toggle side-by-side / unified"},
 		{"b", "toggle the file sidebar"},

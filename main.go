@@ -52,6 +52,7 @@ func run() error {
 	noFollow := flag.Bool("no-follow", false, "open with live-follow paused (git review mode)")
 	context := flag.Int("context", diff.DefaultContext, "unchanged lines shown around each hunk")
 	flag.IntVar(context, "U", diff.DefaultContext, "shorthand for -context")
+	showWS := flag.Bool("show-whitespace", false, "render tabs and trailing spaces as visible marks")
 	flag.Parse()
 
 	th := loadTheme(*themeRef, *themeUpdate)
@@ -61,6 +62,7 @@ func run() error {
 		NoSidebar: *noSidebar,
 		NoFollow:  *noFollow,
 		Context:   *context,
+		ShowWS:    *showWS,
 	}
 
 	repo, text, err := source(flag.Args(), opts.IgnoreWS, opts.Context)
