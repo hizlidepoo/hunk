@@ -95,7 +95,7 @@ func TestIntralineHighlightReachesTheScreen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := New(files, th)
+	m := New(files, th, Options{})
 	u, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 12})
 	out := u.(*Model).render()
 
