@@ -46,9 +46,20 @@ func (r *Repo) IsRepo() bool {
 }
 
 // Diff returns the unstaged changes: the working tree against the index. This
-// is the same set of changes "git add -p" walks you through.
-func (r *Repo) Diff() (string, error) {
-	return r.run("", "diff", "--no-color", "--no-ext-diff", "-U3")
+// is the same set of changes "git add -p" walks you through. ignoreWS drops
+// whitespace-only changes, git's -w.
+func (r *Repo) Diff(ignoreWS bool) (string, error) {
+	return r.run("", diffArgs(ignoreWS, "diff")...)
+}
+
+// diffArgs builds a `git diff` argument list with the flags every diff hunk
+// uses, plus -w when whitespace is being ignored.
+func diffArgs(ignoreWS bool, args ...string) []string {
+	args = append(args, "--no-color", "--no-ext-diff", "-U3")
+	if ignoreWS {
+		args = append(args, "-w")
+	}
+	return args
 }
 
 // Untracked lists files git does not know about yet, honouring .gitignore.
@@ -79,12 +90,12 @@ func (r *Repo) StagedPaths() ([]string, error) {
 
 // StagedDiff returns the staged diff (index against HEAD) for the given paths.
 // It is what lets a fully staged file stay on screen with its changes visible.
-func (r *Repo) StagedDiff(paths []string) (string, error) {
+func (r *Repo) StagedDiff(paths []string, ignoreWS bool) (string, error) {
 	if len(paths) == 0 {
 		return "", nil
 	}
-	args := append([]string{"diff", "--cached", "--no-color", "--no-ext-diff", "-U3", "--"}, paths...)
-	return r.run("", args...)
+	args := append(diffArgs(ignoreWS, "diff", "--cached"), "--")
+	return r.run("", append(args, paths...)...)
 }
 
 // names runs a git command that prints one path per line and returns them.

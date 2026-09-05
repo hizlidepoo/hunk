@@ -74,6 +74,10 @@ type Model struct {
 	watch *watcher
 	live  bool
 
+	// ignoreWS re-diffs with git's -w, hiding whitespace-only changes. Only the
+	// git review mode can honour it, since it is the only source hunk can re-run.
+	ignoreWS bool
+
 	// clock, lastMark and lastMarkAt tell a held space bar from a deliberate
 	// second press. clock is a field so tests do not have to sleep.
 	clock      func() time.Time
@@ -299,6 +303,8 @@ func (m *Model) command(key string) tea.Cmd {
 		m.rebuildIfNeeded()
 	case "f":
 		return m.toggleFollow()
+	case "i":
+		m.toggleIgnoreWS()
 	case "?":
 		m.showHelp = true
 
@@ -327,6 +333,21 @@ func (m *Model) toggleFollow() tea.Cmd {
 		m.msg = "following resumed"
 	}
 	return m.watch.wait()
+}
+
+// toggleIgnoreWS flips whitespace-only changes on and off by re-running the
+// diff. Only git review mode can re-source, so it is a no-op elsewhere.
+func (m *Model) toggleIgnoreWS() {
+	if !m.staging() {
+		return
+	}
+	m.ignoreWS = !m.ignoreWS
+	m.liveReload()
+	if m.ignoreWS {
+		m.msg = "ignoring whitespace"
+	} else {
+		m.msg = "showing whitespace"
+	}
 }
 
 // handleClick routes a left click to whatever is under the pointer: an option
@@ -1125,8 +1146,11 @@ func (m *Model) renderStatus() string {
 			}
 			left += "  ·  " + ind
 		}
-		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "?"}, {key: "q"}}
-		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "? help", "q quit"}
+		if m.ignoreWS {
+			left += "  ·  ≈ ws"
+		}
+		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "?"}, {key: "q"}}
+		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "? help", "q quit"}
 	}
 
 	right := strings.Join(labels, "  ") + " "
@@ -1172,6 +1196,7 @@ func (m *Model) renderHelp() string {
 			[2]string{"w", "stage what is marked"},
 			[2]string{"u", "undo the last stage"},
 			[2]string{"f", "pause / resume following file changes"},
+			[2]string{"i", "ignore / show whitespace-only changes"},
 		)
 	}
 

@@ -106,7 +106,7 @@ func gitModel(t *testing.T, committed, edited map[string]string) (*Model, *git.R
 	}
 
 	repo := &git.Repo{Dir: dir}
-	text, err := GitSource(repo)
+	text, err := GitSource(repo, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,6 +341,33 @@ func TestMarkedCurrentHunkStaysGreenUnderCursor(t *testing.T) {
 	// A non-cursor row of the same hunk is green too.
 	if got := m.railMark(hlo, hlo, hhi); got != m.st.railMarked.Render("▌") {
 		t.Errorf("marked+current row = %q, want the green marked bar", got)
+	}
+}
+
+func TestIgnoreWhitespaceHidesWhitespaceOnlyChange(t *testing.T) {
+	base := "alpha\nbeta\ngamma\n"
+	edited := "alpha\n    beta\ngamma\n" // only indentation changed
+
+	m, _ := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": edited})
+
+	if len(m.files) != 1 {
+		t.Fatalf("a whitespace change should show by default, got %d files", len(m.files))
+	}
+
+	m.handleKey(keyPress("i"))
+	if !m.ignoreWS {
+		t.Fatal("i did not turn on ignore-whitespace")
+	}
+	if len(m.files) != 0 {
+		t.Errorf("whitespace-only change still shown with ignore-ws on: %v", m.files)
+	}
+	if !strings.Contains(m.msg, "ignoring whitespace") {
+		t.Errorf("status = %q", m.msg)
+	}
+
+	m.handleKey(keyPress("i"))
+	if len(m.files) != 1 {
+		t.Errorf("turning ignore-ws back off should restore the change, got %d files", len(m.files))
 	}
 }
 
