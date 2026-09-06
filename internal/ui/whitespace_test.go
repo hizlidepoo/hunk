@@ -7,16 +7,16 @@ import (
 
 func TestExpandTabsShowWhitespace(t *testing.T) {
 	// Off: tab becomes spaces, trailing spaces stay spaces.
-	if got, _ := expandTabs("\tx  ", nil, false); got != "    x  " {
+	if got, _, _ := expandTabs("	x  ", nil, nil, false); got != "    x  " {
 		t.Errorf("showWS off = %q", got)
 	}
 	// On: tab is an arrow then spaces to the stop; trailing spaces become dots.
-	got, _ := expandTabs("\tx  ", nil, true)
+	got, _, _ := expandTabs("	x  ", nil, nil, true)
 	if got != "→   x··" {
 		t.Errorf("showWS on = %q, want %q", got, "→   x··")
 	}
 	// A line with no tabs and no trailing spaces is untouched either way.
-	if g, _ := expandTabs("plain", nil, true); g != "plain" {
+	if g, _, _ := expandTabs("plain", nil, nil, true); g != "plain" {
 		t.Errorf("plain line changed: %q", g)
 	}
 }

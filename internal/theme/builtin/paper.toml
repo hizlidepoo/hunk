@@ -4,6 +4,9 @@
 
 name = "paper"
 
+# Syntax highlighting palette: any chroma style name.
+syntax = "github"
+
 [ui]
 background          = "#fdfdf7"
 foreground          = "#2c2c2c"

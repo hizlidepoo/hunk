@@ -95,6 +95,11 @@ type Model struct {
 	// rendering choice — no re-diff — so it works in every mode.
 	showWS bool
 
+	// syntax turns on language-aware highlighting; hl does the coloring. Both are
+	// a rendering choice, no re-diff.
+	syntax bool
+	hl     *highlighter
+
 	// raw is every parsed file; files is raw after the regex filter drops hunks
 	// whose every changed line matches. filter nil means files == raw.
 	raw    []diff.File
@@ -134,6 +139,7 @@ type Options struct {
 	Context   int    // --context: unchanged lines around each hunk (0 falls back to the default)
 	ShowWS    bool   // --show-whitespace: render tabs and trailing spaces as marks
 	Filter    string // --filter: hide hunks whose every changed line matches this regex
+	NoSyntax  bool   // --no-syntax: open with syntax highlighting off
 }
 
 // New builds a model over an already-parsed diff.
@@ -151,6 +157,8 @@ func New(files []diff.File, t *theme.Theme, opts Options) *Model {
 		ignoreWS:    opts.IgnoreWS,
 		context:     context,
 		showWS:      opts.ShowWS,
+		syntax:      !opts.NoSyntax,
+		hl:          newHighlighter(t.Syntax),
 		clock:       time.Now,
 		lastMark:    [2]int{-1, -1},
 	}
@@ -462,6 +470,13 @@ func (m *Model) command(key string) tea.Cmd {
 		}
 	case "F":
 		m.filterInput, m.filterTyped = true, ""
+	case "H":
+		m.syntax = !m.syntax
+		if m.syntax {
+			m.msg = "syntax highlighting on"
+		} else {
+			m.msg = "syntax highlighting off"
+		}
 	case "?":
 		m.showHelp = true
 
@@ -588,8 +603,8 @@ func (m *Model) setFilter(src string) {
 	m.rebuildView()
 	m.restoreCursor(where)
 
-	switch {
-	case re == nil:
+	switch re {
+	case nil:
 		m.msg = "filter cleared"
 	default:
 		m.msg = "filtering out /" + src + "/"
@@ -1209,21 +1224,32 @@ func (m *Model) renderRow(r Row, w int, focus bool) string {
 	inner := w - 2
 	lead := m.st.box.Render(edgeGlyph(r.BoxLeft, true))
 	trail := m.st.box.Render(edgeGlyph(r.BoxRight, false))
+	hl := m.highlightFor(r)
 
 	if !m.builtSplit {
 		return lead + m.paneOr(r.BoxLeft, inner, func() string {
-			return m.renderUnifiedRow(r, inner)
+			return m.renderUnifiedRow(r, inner, hl)
 		}) + trail
 	}
 
 	half := (inner - 1) / 2
 	left := m.paneOr(r.BoxLeft, half, func() string {
-		return m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll, m.showWS)
+		return m.st.renderSide(r.Left, "", numWidth, half-numWidth-1, m.hscroll, m.showWS, hl)
 	})
 	right := m.paneOr(r.BoxRight, inner-half-1, func() string {
-		return m.st.renderSide(r.Right, "", numWidth, inner-half-1-numWidth-1, m.hscroll, m.showWS)
+		return m.st.renderSide(r.Right, "", numWidth, inner-half-1-numWidth-1, m.hscroll, m.showWS, hl)
 	})
 	return lead + left + m.divider(r) + right + trail
+}
+
+// highlightFor returns the per-line syntax colorer for a row's file, or nil when
+// highlighting is off or no lexer will match.
+func (m *Model) highlightFor(r Row) func(string) []synSpan {
+	if !m.syntax || m.hl == nil || r.FileIdx < 0 || r.FileIdx >= len(m.files) {
+		return nil
+	}
+	path := m.files[r.FileIdx].Path()
+	return func(text string) []synSpan { return m.hl.spans(path, text) }
 }
 
 // paneOr draws a pane's share of a rule row, or the pane's normal contents when
@@ -1302,7 +1328,7 @@ func (m *Model) divider(r Row) string {
 
 // renderUnifiedRow shows a single column with +/-/space signs, the shape people
 // already know from git diff.
-func (m *Model) renderUnifiedRow(r Row, w int) string {
+func (m *Model) renderUnifiedRow(r Row, w int, hl func(string) []synSpan) string {
 	side, sign := r.Left, " "
 	if r.Left.Empty {
 		side, sign = r.Right, "+"
@@ -1311,7 +1337,7 @@ func (m *Model) renderUnifiedRow(r Row, w int) string {
 	} else if r.Left.Kind == diff.Added {
 		sign = "+"
 	}
-	return m.st.renderSide(side, sign, numWidth, w-numWidth-1, m.hscroll, m.showWS)
+	return m.st.renderSide(side, sign, numWidth, w-numWidth-1, m.hscroll, m.showWS, hl)
 }
 
 // renderSidebar lists the changed files, or nil when there is no room for it.
@@ -1445,9 +1471,9 @@ func (m *Model) renderStatus() string {
 		left += "  ·  ⊘ /" + m.filterSrc + "/"
 	}
 	opts := []hintZone{
-		{key: "n"}, {key: "]"}, {key: "s"}, {key: "/"}, {key: "W"}, {key: "F"}, {key: "?"}, {key: "q"},
+		{key: "n"}, {key: "]"}, {key: "s"}, {key: "/"}, {key: "W"}, {key: "F"}, {key: "H"}, {key: "?"}, {key: "q"},
 	}
-	labels := []string{"n/p hunk", "]/[ file", "s split", "/ search", "W space", "F filter", "? help", "q quit"}
+	labels := []string{"n/p hunk", "]/[ file", "s split", "/ search", "W space", "F filter", "H syntax", "? help", "q quit"}
 	if m.staging() {
 		if hunks, files := m.marks.total(); hunks > 0 {
 			left += fmt.Sprintf("  ·  %s marked in %s", plural(hunks, "hunk"), plural(files, "file"))
@@ -1465,8 +1491,8 @@ func (m *Model) renderStatus() string {
 		if m.context != diff.DefaultContext {
 			left += fmt.Sprintf("  ·  ⋯ %d", m.context)
 		}
-		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "+"}, {key: "W"}, {key: "/"}, {key: "F"}, {key: "?"}, {key: "q"}}
-		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "+/- ctx", "W space", "/ search", "F filter", "? help", "q quit"}
+		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "+"}, {key: "W"}, {key: "H"}, {key: "/"}, {key: "F"}, {key: "?"}, {key: "q"}}
+		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "+/- ctx", "W space", "H syntax", "/ search", "F filter", "? help", "q quit"}
 	}
 
 	right := strings.Join(labels, "  ") + " "
@@ -1498,6 +1524,7 @@ func (m *Model) renderHelp() string {
 		{"/", "search; enter jumps, esc clears"},
 		{"n / N", "next / previous match (while searching)"},
 		{"W", "show / hide whitespace (tabs, trailing spaces)"},
+		{"H", "toggle syntax highlighting"},
 		{"F", "filter out hunks matching a regex; empty clears"},
 		{"h / l, ← / →", "scroll sideways"},
 		{"s", "toggle side-by-side / unified"},

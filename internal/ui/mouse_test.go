@@ -84,7 +84,7 @@ func clickAt(t *testing.T, m *Model, x, y int) *Model {
 
 func TestClickStatusOptionRunsItsKey(t *testing.T) {
 	m := newTestModel(t, sample)
-	screen(t, m, 120, 30) // render so the hint zones are recorded
+	screen(t, m, 200, 30) // render so the hint zones are recorded
 
 	var help *hintZone
 	for i := range m.hints {
@@ -104,7 +104,7 @@ func TestClickStatusOptionRunsItsKey(t *testing.T) {
 
 func TestClickStatusOptionTogglesSplit(t *testing.T) {
 	m := newTestModel(t, sample)
-	screen(t, m, 120, 30)
+	screen(t, m, 200, 30)
 	before := m.wantSplit
 
 	var split *hintZone

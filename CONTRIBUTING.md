@@ -36,6 +36,10 @@ gofmt -l .    # lists anything unformatted
 gofmt -w .
 ```
 
+Run `make hooks` once after cloning to install a pre-commit hook that runs
+`gofmt` and (if installed) `golangci-lint` on every commit, so lint failures
+are caught before they reach CI.
+
 ## Trying your change
 
 ```sh

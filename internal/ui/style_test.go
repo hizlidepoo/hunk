@@ -33,7 +33,7 @@ func TestExpandTabs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ranges := expandTabs(tt.in, tt.ranges, false)
+			got, ranges, _ := expandTabs(tt.in, tt.ranges, nil, false)
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
