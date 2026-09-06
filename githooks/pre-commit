@@ -1,0 +1,23 @@
+#!/bin/sh
+# Installed via `make hooks` (sets core.hooksPath to this directory).
+# Blocks a commit on unformatted Go or a failing lint, matching what CI runs.
+set -e
+
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+if [ -z "$files" ]; then
+	exit 0
+fi
+
+unformatted=$(gofmt -l $files)
+if [ -n "$unformatted" ]; then
+	echo "pre-commit: gofmt -w needed on:" >&2
+	echo "$unformatted" >&2
+	exit 1
+fi
+
+if ! command -v golangci-lint >/dev/null 2>&1; then
+	echo "pre-commit: golangci-lint not installed, skipping lint (see CONTRIBUTING.md)" >&2
+	exit 0
+fi
+
+golangci-lint run ./...

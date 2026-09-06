@@ -603,8 +603,8 @@ func (m *Model) setFilter(src string) {
 	m.rebuildView()
 	m.restoreCursor(where)
 
-	switch {
-	case re == nil:
+	switch re {
+	case nil:
 		m.msg = "filter cleared"
 	default:
 		m.msg = "filtering out /" + src + "/"

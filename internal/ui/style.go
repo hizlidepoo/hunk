@@ -231,12 +231,12 @@ func paintSyntax(text string, ranges []diff.Range, spans []synSpan, line, word l
 	return b.String()
 }
 
-func clampCut(v, max int) int {
+func clampCut(v, hi int) int {
 	if v < 0 {
 		return 0
 	}
-	if v > max {
-		return max
+	if v > hi {
+		return hi
 	}
 	return v
 }

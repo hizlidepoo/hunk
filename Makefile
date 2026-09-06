@@ -67,6 +67,11 @@ lint:
 tidy:
 	go mod tidy
 
+## hooks: install the pre-commit hook (gofmt + lint before every commit)
+.PHONY: hooks
+hooks:
+	git config core.hooksPath githooks
+
 ## check: fmt, vet, and test — run before pushing
 .PHONY: check
 check: fmt vet test
