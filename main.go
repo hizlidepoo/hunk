@@ -139,13 +139,13 @@ func stripLog() bool {
 // source produces unified diff text from wherever this invocation gets it. A
 // non-nil repo means the diff came from a git repository; a non-nil commit list
 // means it is that repository's history, which hunk only ever reads.
-func source(logMode bool, args []string, ignoreWS bool, context, max int) (*git.Repo, []git.Commit, string, error) {
+func source(logMode bool, args []string, ignoreWS bool, context, maxCommits int) (*git.Repo, []git.Commit, string, error) {
 	if logMode {
 		repo := &git.Repo{}
 		if !git.Available() || !repo.IsRepo() {
 			return nil, nil, "", fmt.Errorf("not in a git repository: hunk log reads a repository's history")
 		}
-		commits, err := repo.Log(max, args)
+		commits, err := repo.Log(maxCommits, args)
 		if err != nil {
 			return nil, nil, "", err
 		}
