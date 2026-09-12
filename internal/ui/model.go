@@ -25,13 +25,19 @@ const markRepeat = time.Second
 
 const (
 	sidebarWidth = 28
+	// logSidebarWidth is the sidebar in history mode, where it carries a short
+	// sha and a subject as well as the file list.
+	logSidebarWidth = 36
 	// minSidebarWidth is the total terminal width below which the sidebar is
 	// hidden: past this point it costs more than it tells you.
 	minSidebarWidth = 100
 	// minSplitWidth is the content width below which side-by-side collapses to
 	// a unified view rather than showing two unreadable columns.
 	minSplitWidth = 80
-	numWidth      = 5
+	// logAuthorWidth is the terminal width at which history mode's status bar
+	// has room for who wrote the commit as well as the key hints.
+	logAuthorWidth = 160
+	numWidth       = 5
 )
 
 // Model is the whole TUI state.
@@ -69,6 +75,13 @@ type Model struct {
 	// working-tree changes, so the sidebar can show what is already approved.
 	staged   map[string]bool
 	unstaged map[string]bool
+
+	// Commit history mode. commits is the log, newest first, and commitIdx is
+	// the commit on screen. History is read: logMode keeps marking and staging
+	// off even though repo is set, so nothing here can write the index.
+	commits   []git.Commit
+	commitIdx int
+	logMode   bool
 
 	// Live-follow: watch reports working-tree changes and live is whether hunk
 	// currently acts on them. Both are zero for a plain diff, which never
@@ -304,8 +317,17 @@ func RunGit(repo *git.Repo, files []diff.File, t *theme.Theme, opts Options) err
 	return err
 }
 
-// staging reports whether this session can write to the index.
-func (m *Model) staging() bool { return m.repo != nil }
+// staging reports whether this session can write to the index. Reading history
+// is a repo session that cannot: the past is not something to stage.
+func (m *Model) staging() bool { return m.repo != nil && !m.logMode }
+
+// sidebarW is the sidebar width for this mode.
+func (m *Model) sidebarW() int {
+	if m.logMode {
+		return logSidebarWidth
+	}
+	return sidebarWidth
+}
 
 // Init starts following the working tree when live-follow is on; otherwise
 // hunk has nothing to do before its first render.
@@ -322,7 +344,7 @@ func (m *Model) sidebar() bool { return m.wantSidebar && m.width >= minSidebarWi
 func (m *Model) contentWidth() int {
 	w := m.width
 	if m.wantSidebar && m.width >= minSidebarWidth {
-		w -= sidebarWidth + 1
+		w -= m.sidebarW() + 1
 	}
 	if w < 1 {
 		return 1
@@ -435,6 +457,12 @@ func (m *Model) command(key string) tea.Cmd {
 		m.moveTo(NextIndex(m.view.FileRows, m.cur))
 	case "[":
 		m.moveTo(PrevIndex(m.view.FileRows, m.cur))
+	// Commits run newest first, so } walks back in time — the direction git log
+	// prints. Both clamp at the ends rather than wrapping, like ] and [.
+	case "}":
+		m.loadCommit(m.commitIdx + 1)
+	case "{":
+		m.loadCommit(m.commitIdx - 1)
 
 	// ponytail: horizontal scrolling instead of soft-wrap. Wrapping a
 	// side-by-side view means rows stop being one screen line each, which the
@@ -512,9 +540,9 @@ func (m *Model) toggleFollow() tea.Cmd {
 const maxContext = 20
 
 // changeContext widens or narrows the unchanged lines around each hunk and
-// re-diffs. Git review mode only, since it is the only source hunk can re-run.
+// re-diffs. Git modes only, since they are the only sources hunk can re-run.
 func (m *Model) changeContext(delta int) {
-	if !m.staging() {
+	if m.repo == nil {
 		return
 	}
 	next := clamp(m.context+delta, 0, maxContext)
@@ -522,18 +550,18 @@ func (m *Model) changeContext(delta int) {
 		return
 	}
 	m.context = next
-	m.liveReload()
+	m.rediff()
 	m.msg = "context: " + plural(m.context, "line")
 }
 
 // toggleIgnoreWS flips whitespace-only changes on and off by re-running the
-// diff. Only git review mode can re-source, so it is a no-op elsewhere.
+// diff. Only a git mode can re-source, so it is a no-op elsewhere.
 func (m *Model) toggleIgnoreWS() {
-	if !m.staging() {
+	if m.repo == nil {
 		return
 	}
 	m.ignoreWS = !m.ignoreWS
-	m.liveReload()
+	m.rediff()
 	if m.ignoreWS {
 		m.msg = "ignoring whitespace"
 	} else {
@@ -681,8 +709,19 @@ func (m *Model) handleClick(e tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Sidebar: the left column, when shown. A click jumps to that file.
-	if m.sidebar() && x < sidebarWidth {
+	// Sidebar: the left column, when shown. A click jumps to that file, or in
+	// history mode to that commit.
+	if m.sidebar() && x < m.sidebarW() {
+		if m.logMode {
+			ci, fi := m.logSidebarAt(y)
+			switch {
+			case ci >= 0:
+				m.loadCommit(ci)
+			case fi >= 0:
+				m.moveTo(m.view.FileRows[fi])
+			}
+			return m, nil
+		}
 		if idx := m.sidebarFileAt(y); idx >= 0 {
 			m.moveTo(m.view.FileRows[idx])
 		}
@@ -700,15 +739,7 @@ func (m *Model) handleClick(e tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 // sidebarFileAt maps a body-row y to the file index drawn there, or -1 for a
 // blank line past the end. It mirrors the windowing in renderSidebar.
 func (m *Model) sidebarFileAt(y int) int {
-	cur := 0
-	if m.cur < len(m.view.Rows) {
-		cur = m.view.Rows[m.cur].FileIdx
-	}
-	start := 0
-	if h := m.bodyHeight(); cur >= h {
-		start = cur - h + 1
-	}
-	idx := start + y
+	idx := listStart(m.currentFile(), m.bodyHeight()) + y
 	if idx < 0 || idx >= len(m.files) {
 		return -1
 	}
@@ -1138,6 +1169,8 @@ func (m *Model) renderBody() []string {
 func (m *Model) renderEmpty(w int) []string {
 	msg := "no changes to show"
 	switch {
+	case m.logMode:
+		msg = "this commit changes nothing — } and { move to another"
 	case m.staging() && m.live:
 		msg = "nothing to stage yet — watching for edits"
 	case m.staging() && m.watch != nil:
@@ -1346,44 +1379,56 @@ func (m *Model) renderSidebar() []string {
 		return nil
 	}
 
-	cur := 0
-	if m.cur < len(m.view.Rows) {
-		cur = m.view.Rows[m.cur].FileIdx
+	h, w := m.bodyHeight(), m.sidebarW()
+	if m.logMode {
+		return m.renderLogSidebar(h, w)
 	}
 
-	// Keep the current file on screen when there are more files than lines.
-	h := m.bodyHeight()
-	start := 0
-	if cur >= h {
-		start = cur - h + 1
-	}
-
+	start := listStart(m.currentFile(), h)
 	out := make([]string, 0, h)
 	for i := 0; i < h; i++ {
-		idx := start + i
-		if idx >= len(m.files) {
-			out = append(out, m.st.sidebar.Render(strings.Repeat(" ", sidebarWidth)))
-			continue
-		}
-		f := m.files[idx]
-		style := m.st.sidebar
-		if idx == cur {
-			style = m.st.sidebarSel
-		}
-
-		if !m.staging() {
-			label := fmt.Sprintf(" %s  +%d -%d",
-				shortPath(f.Path(), sidebarWidth-10), f.Added, f.Removed)
-			out = append(out, fit(style.Render(label), 0, sidebarWidth, style))
-			continue
-		}
-
-		symbol, symStyle := m.fileGlyph(idx, f, style)
-		rest := fmt.Sprintf("%s  +%d -%d", shortPath(f.Path(), sidebarWidth-12), f.Added, f.Removed)
-		line := style.Render(" ") + symStyle.Render(symbol) + style.Render(" "+rest)
-		out = append(out, fit(line, 0, sidebarWidth, style))
+		out = append(out, m.fileLine(start+i, w))
 	}
 	return out
+}
+
+// currentFile is the file the cursor is in.
+func (m *Model) currentFile() int {
+	if m.cur < len(m.view.Rows) {
+		return m.view.Rows[m.cur].FileIdx
+	}
+	return 0
+}
+
+// listStart is the first index a list of h rows should draw so that the
+// selected one stays on screen.
+func listStart(cur, h int) int {
+	if h > 0 && cur >= h {
+		return cur - h + 1
+	}
+	return 0
+}
+
+// fileLine renders one row of the file list, or a blank row past the end.
+func (m *Model) fileLine(idx, w int) string {
+	if idx < 0 || idx >= len(m.files) {
+		return m.st.sidebar.Render(strings.Repeat(" ", w))
+	}
+	f := m.files[idx]
+	style := m.st.sidebar
+	if idx == m.currentFile() {
+		style = m.st.sidebarSel
+	}
+
+	if !m.staging() {
+		label := fmt.Sprintf(" %s  +%d -%d", shortPath(f.Path(), w-10), f.Added, f.Removed)
+		return fit(style.Render(label), 0, w, style)
+	}
+
+	symbol, symStyle := m.fileGlyph(idx, f, style)
+	rest := fmt.Sprintf("%s  +%d -%d", shortPath(f.Path(), w-12), f.Added, f.Removed)
+	line := style.Render(" ") + symStyle.Render(symbol) + style.Render(" "+rest)
+	return fit(line, 0, w, style)
 }
 
 // fileGlyph is the sidebar symbol for a file and the style to draw it in.
@@ -1431,6 +1476,12 @@ func (m *Model) renderStatus() string {
 		return fit(m.st.statusbar.Render(" "+m.msg), 0, m.width, m.st.statusbar)
 	}
 	if len(m.view.Rows) == 0 {
+		if m.logMode && m.filter == nil {
+			c := m.commit()
+			status := fmt.Sprintf(" %s  %s  ·  nothing in this commit  ·  commit %d/%d",
+				c.Short, clip(c.Subject, 40), m.commitIdx+1, len(m.commits))
+			return fit(m.st.statusbar.Render(status+"  ·  }/{ commit  ·  q quit"), 0, m.width, m.st.statusbar)
+		}
 		if m.filter != nil {
 			return fit(m.st.statusbar.Render(" everything is filtered out by /"+m.filterSrc+"/  ·  F filter  ·  q quit"), 0, m.width, m.st.statusbar)
 		}
@@ -1474,6 +1525,12 @@ func (m *Model) renderStatus() string {
 		{key: "n"}, {key: "]"}, {key: "s"}, {key: "/"}, {key: "W"}, {key: "F"}, {key: "H"}, {key: "?"}, {key: "q"},
 	}
 	labels := []string{"n/p hunk", "]/[ file", "s split", "/ search", "W space", "F filter", "H syntax", "? help", "q quit"}
+	if m.logMode {
+		// A narrower set of hints than the other modes: the commit one has to
+		// fit, and what it displaces (W, F, i, +/-) is still in the help.
+		opts = []hintZone{{key: "}"}, {key: "]"}, {key: "n"}, {key: "s"}, {key: "/"}, {key: "H"}, {key: "?"}, {key: "q"}}
+		labels = []string{"}/{ commit", "]/[ file", "n/p hunk", "s split", "/ search", "H syntax", "? help", "q quit"}
+	}
 	if m.staging() {
 		if hunks, files := m.marks.total(); hunks > 0 {
 			left += fmt.Sprintf("  ·  %s marked in %s", plural(hunks, "hunk"), plural(files, "file"))
@@ -1496,6 +1553,31 @@ func (m *Model) renderStatus() string {
 	}
 
 	right := strings.Join(labels, "  ") + " "
+
+	// History mode builds its line once the hints are sized, because the subject
+	// takes whatever room they leave it. The path and its counts are not
+	// repeated: the file header at the top of the body already has them.
+	if m.logMode {
+		c := m.commit()
+		head := " " + c.Short + "  "
+		tail := fmt.Sprintf("  ·  commit %d/%d  ·  file %d/%d",
+			m.commitIdx+1, len(m.commits), fileIdx+1, len(m.files))
+		if m.width >= logAuthorWidth {
+			tail += fmt.Sprintf("  ·  %s, %s", c.Author, c.Rel)
+		}
+		if m.ignoreWS {
+			tail += "  ·  ≈ ws"
+		}
+		if m.context != diff.DefaultContext {
+			tail += fmt.Sprintf("  ·  ⋯ %d", m.context)
+		}
+		room := m.width - lipgloss.Width(head+tail+right) - 1
+		if room < 8 {
+			room = m.width - lipgloss.Width(head+tail) - 1 // no room for the hints anyway
+		}
+		left = head + clip(c.Subject, clamp(room, 8, 64)) + tail
+	}
+
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		return fit(m.st.statusbar.Render(left), 0, m.width, m.st.statusbar)
@@ -1533,6 +1615,14 @@ func (m *Model) renderHelp() string {
 		{"q", "quit"},
 		{"", ""},
 		{"mouse", "click a file, row, or status-bar option; wheel scrolls"},
+	}
+	if m.logMode {
+		rows = append(rows,
+			[2]string{"", ""},
+			[2]string{"} / {", "older / newer commit"},
+			[2]string{"i", "ignore / show whitespace-only changes"},
+			[2]string{"+ / -", "more / less context around each hunk"},
+		)
 	}
 	if m.staging() {
 		rows = append(rows,
