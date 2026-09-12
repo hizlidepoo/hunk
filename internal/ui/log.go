@@ -58,11 +58,10 @@ func (m *Model) loadCommit(idx int) {
 // read worked; a failure leaves what is on screen alone and says so.
 func (m *Model) showCommit() bool {
 	text, err := m.repo.Show(m.commit().SHA, m.ignoreWS, m.context)
-	if err != nil {
-		m.msg = "show failed: " + firstLine(err.Error())
-		return false
+	var files []diff.File
+	if err == nil {
+		files, err = diff.ParseString(text)
 	}
-	files, err := diff.ParseString(text)
 	if err != nil {
 		m.msg = "show failed: " + firstLine(err.Error())
 		return false
@@ -96,9 +95,6 @@ func (m *Model) logSplit(h int) int {
 	n := avail / 2
 	if n > len(m.commits) {
 		n = len(m.commits)
-	}
-	if n < 1 {
-		n = 1
 	}
 	return n
 }
@@ -171,9 +167,4 @@ func (m *Model) sidebarHeader(label string, w int) string {
 // clip shortens text from the right, which is where a commit subject gets less
 // informative. shortPath does the opposite for paths, where the tail names the
 // file.
-func clip(s string, w int) string {
-	if w < 2 || lipgloss.Width(s) <= w {
-		return s
-	}
-	return ansi.Truncate(s, w-1, "") + "…"
-}
+func clip(s string, w int) string { return ansi.Truncate(s, w, "…") }

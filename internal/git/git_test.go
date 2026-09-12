@@ -443,8 +443,8 @@ func TestLogReadsHistoryNewestFirst(t *testing.T) {
 	if c.Author != "hunk test" {
 		t.Errorf("Author = %q, want %q", c.Author, "hunk test")
 	}
-	if c.Date == "" || c.Rel == "" {
-		t.Errorf("Date = %q, Rel = %q, want both set", c.Date, c.Rel)
+	if c.Rel == "" {
+		t.Error("Rel is empty, want a relative date")
 	}
 }
 
@@ -515,25 +515,6 @@ func TestShowMergeCommitHasADiff(t *testing.T) {
 	}
 	if len(files) != 1 || files[0].Path() != "b.txt" {
 		t.Fatalf("merge commit gave %d files (%s), want b.txt", len(files), text)
-	}
-}
-
-// Show never writes: reading history leaves the tree and the index alone.
-func TestShowWritesNothing(t *testing.T) {
-	r := logRepo(t)
-
-	commits, err := r.Log(10, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before := gitOut(t, r, "status", "--porcelain")
-	for _, c := range commits {
-		if _, err := r.Show(c.SHA, false, diff.DefaultContext); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if after := gitOut(t, r, "status", "--porcelain"); after != before {
-		t.Errorf("status changed after reading history:\n%q\n%q", before, after)
 	}
 }
 

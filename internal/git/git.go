@@ -120,14 +120,13 @@ type Commit struct {
 	SHA     string // full hash, what Show is called with
 	Short   string // abbreviated, what the sidebar shows
 	Author  string
-	Date    string // absolute, for the status bar
 	Rel     string // relative to now, e.g. "3 days ago"
 	Subject string
 }
 
 // logFormat prints one commit per line with NUL-separated fields, so a subject
 // containing any printable separator still parses.
-const logFormat = "--pretty=format:%H%x00%h%x00%an%x00%ad%x00%ar%x00%s"
+const logFormat = "--pretty=format:%H%x00%h%x00%an%x00%ar%x00%s"
 
 // Log reads the n most recent commits, newest first. paths, when given, narrows
 // the history to commits that touch them.
@@ -139,7 +138,7 @@ func (r *Repo) Log(n int, paths []string) ([]Commit, error) {
 	if _, err := r.run("", "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
 		return nil, nil
 	}
-	args := []string{"log", "--no-color", "-n", strconv.Itoa(n), logFormat, "--date=short"}
+	args := []string{"log", "--no-color", "-n", strconv.Itoa(n), logFormat}
 	if len(paths) > 0 {
 		args = append(append(args, "--"), paths...)
 	}
@@ -151,11 +150,11 @@ func (r *Repo) Log(n int, paths []string) ([]Commit, error) {
 	var commits []Commit
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(line, "\x00")
-		if len(f) < 6 {
+		if len(f) < 5 {
 			continue // an empty history prints nothing at all
 		}
 		commits = append(commits, Commit{
-			SHA: f[0], Short: f[1], Author: f[2], Date: f[3], Rel: f[4], Subject: f[5],
+			SHA: f[0], Short: f[1], Author: f[2], Rel: f[3], Subject: f[4],
 		})
 	}
 	return commits, nil

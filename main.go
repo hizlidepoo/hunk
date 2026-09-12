@@ -86,17 +86,7 @@ func run() error {
 		NoSyntax:  *noSyntax,
 	}
 
-	var (
-		repo    *git.Repo
-		commits []git.Commit
-		text    string
-		err     error
-	)
-	if logMode {
-		repo, commits, text, err = logSource(flag.Args(), opts.IgnoreWS, opts.Context, *maxCount)
-	} else {
-		repo, text, err = source(flag.Args(), opts.IgnoreWS, opts.Context)
-	}
+	repo, commits, text, err := source(logMode, flag.Args(), opts.IgnoreWS, opts.Context, *maxCount)
 	if err != nil {
 		return err
 	}
@@ -146,52 +136,51 @@ func stripLog() bool {
 	return false
 }
 
-// logSource opens a repository's history: the commit list the panel walks, and
-// the newest commit's diff for the first screen.
-func logSource(paths []string, ignoreWS bool, context, max int) (*git.Repo, []git.Commit, string, error) {
-	repo := &git.Repo{}
-	if !git.Available() || !repo.IsRepo() {
-		return nil, nil, "", fmt.Errorf("not in a git repository: hunk log reads a repository's history")
-	}
-	commits, err := repo.Log(max, paths)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	if len(commits) == 0 {
-		return nil, nil, "", fmt.Errorf("no commits to show")
-	}
-	text, err := repo.Show(commits[0].SHA, ignoreWS, context)
-	return repo, commits, text, err
-}
-
 // source produces unified diff text from wherever this invocation gets it. A
-// non-nil repo means the diff came from a working tree hunk may stage into.
-func source(args []string, ignoreWS bool, context int) (*git.Repo, string, error) {
+// non-nil repo means the diff came from a git repository; a non-nil commit list
+// means it is that repository's history, which hunk only ever reads.
+func source(logMode bool, args []string, ignoreWS bool, context, max int) (*git.Repo, []git.Commit, string, error) {
+	if logMode {
+		repo := &git.Repo{}
+		if !git.Available() || !repo.IsRepo() {
+			return nil, nil, "", fmt.Errorf("not in a git repository: hunk log reads a repository's history")
+		}
+		commits, err := repo.Log(max, args)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if len(commits) == 0 {
+			return nil, nil, "", fmt.Errorf("no commits to show")
+		}
+		text, err := repo.Show(commits[0].SHA, ignoreWS, context)
+		return repo, commits, text, err
+	}
+
 	switch len(args) {
 	case 0:
 		// A pipe is a diff to read; a terminal means the user ran hunk on its
 		// own, which is a request to review the repo they are standing in.
 		if !term.IsTerminal(os.Stdin.Fd()) {
 			b, err := io.ReadAll(os.Stdin)
-			return nil, string(b), err
+			return nil, nil, string(b), err
 		}
 
 		repo := &git.Repo{}
 		if !git.Available() || !repo.IsRepo() {
 			flag.Usage()
-			return nil, "", fmt.Errorf("not in a git repository: pipe a diff in, or name two paths")
+			return nil, nil, "", fmt.Errorf("not in a git repository: pipe a diff in, or name two paths")
 		}
 		// A clean working tree is not an error: hunk follows the tree live, so
 		// it opens empty and fills in as soon as something is edited.
 		text, err := ui.GitSource(repo, ignoreWS, context)
-		return repo, text, err
+		return repo, nil, text, err
 
 	case 2:
 		text, err := diff.Generate(args[0], args[1], context)
-		return nil, text, err
+		return nil, nil, text, err
 
 	default:
 		flag.Usage()
-		return nil, "", fmt.Errorf("expected two paths, got %d", len(args))
+		return nil, nil, "", fmt.Errorf("expected two paths, got %d", len(args))
 	}
 }

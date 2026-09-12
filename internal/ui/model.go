@@ -34,7 +34,10 @@ const (
 	// minSplitWidth is the content width below which side-by-side collapses to
 	// a unified view rather than showing two unreadable columns.
 	minSplitWidth = 80
-	numWidth      = 5
+	// logAuthorWidth is the terminal width at which history mode's status bar
+	// has room for who wrote the commit as well as the key hints.
+	logAuthorWidth = 160
+	numWidth       = 5
 )
 
 // Model is the whole TUI state.
@@ -318,11 +321,6 @@ func RunGit(repo *git.Repo, files []diff.File, t *theme.Theme, opts Options) err
 // is a repo session that cannot: the past is not something to stage.
 func (m *Model) staging() bool { return m.repo != nil && !m.logMode }
 
-// sourced reports whether hunk can re-run whatever produced the diff on screen,
-// which is what lets the context width and whitespace toggles re-diff. Both git
-// modes can; a piped diff or a pair of paths cannot.
-func (m *Model) sourced() bool { return m.repo != nil }
-
 // sidebarW is the sidebar width for this mode.
 func (m *Model) sidebarW() int {
 	if m.logMode {
@@ -544,7 +542,7 @@ const maxContext = 20
 // changeContext widens or narrows the unchanged lines around each hunk and
 // re-diffs. Git modes only, since they are the only sources hunk can re-run.
 func (m *Model) changeContext(delta int) {
-	if !m.sourced() {
+	if m.repo == nil {
 		return
 	}
 	next := clamp(m.context+delta, 0, maxContext)
@@ -559,7 +557,7 @@ func (m *Model) changeContext(delta int) {
 // toggleIgnoreWS flips whitespace-only changes on and off by re-running the
 // diff. Only a git mode can re-source, so it is a no-op elsewhere.
 func (m *Model) toggleIgnoreWS() {
-	if !m.sourced() {
+	if m.repo == nil {
 		return
 	}
 	m.ignoreWS = !m.ignoreWS
@@ -1528,8 +1526,8 @@ func (m *Model) renderStatus() string {
 	}
 	labels := []string{"n/p hunk", "]/[ file", "s split", "/ search", "W space", "F filter", "H syntax", "? help", "q quit"}
 	if m.logMode {
-		// A narrower set than the other modes: the commit hint has to fit, and
-		// what it displaces (W, F, i, +/-) is still in the help.
+		// A narrower set of hints than the other modes: the commit one has to
+		// fit, and what it displaces (W, F, i, +/-) is still in the help.
 		opts = []hintZone{{key: "}"}, {key: "]"}, {key: "n"}, {key: "s"}, {key: "/"}, {key: "H"}, {key: "?"}, {key: "q"}}
 		labels = []string{"}/{ commit", "]/[ file", "n/p hunk", "s split", "/ search", "H syntax", "? help", "q quit"}
 	}
@@ -1556,37 +1554,28 @@ func (m *Model) renderStatus() string {
 
 	right := strings.Join(labels, "  ") + " "
 
-	// History mode builds its line last, because how much of the subject fits
-	// depends on the room the key hints leave. The path and its counts are not
-	// repeated here: the file header at the top of the body already has them,
-	// and the commit needs the space more.
+	// History mode builds its line once the hints are sized, because the subject
+	// takes whatever room they leave it. The path and its counts are not
+	// repeated: the file header at the top of the body already has them.
 	if m.logMode {
 		c := m.commit()
 		head := " " + c.Short + "  "
 		tail := fmt.Sprintf("  ·  commit %d/%d  ·  file %d/%d",
 			m.commitIdx+1, len(m.commits), fileIdx+1, len(m.files))
+		if m.width >= logAuthorWidth {
+			tail += fmt.Sprintf("  ·  %s, %s", c.Author, c.Rel)
+		}
 		if m.ignoreWS {
 			tail += "  ·  ≈ ws"
 		}
 		if m.context != diff.DefaultContext {
 			tail += fmt.Sprintf("  ·  ⋯ %d", m.context)
 		}
-		room := m.width - lipgloss.Width(right) - lipgloss.Width(head+tail) - 1
-		if room < 12 {
-			// The key hints do not fit on this terminal whatever the subject
-			// does, so the line is the commit's alone.
-			room = m.width - lipgloss.Width(head+tail) - 1
+		room := m.width - lipgloss.Width(head+tail+right) - 1
+		if room < 8 {
+			room = m.width - lipgloss.Width(head+tail) - 1 // no room for the hints anyway
 		}
 		left = head + clip(c.Subject, clamp(room, 8, 64)) + tail
-
-		// Who wrote it and when comes last, and only while it does not push the
-		// key hints off the screen.
-		for _, extra := range []string{"  ·  " + c.Author + ", " + c.Rel, "  ·  " + c.Rel} {
-			if m.width-lipgloss.Width(left+extra)-lipgloss.Width(right) >= 1 {
-				left += extra
-				break
-			}
-		}
 	}
 
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -1631,7 +1620,6 @@ func (m *Model) renderHelp() string {
 		rows = append(rows,
 			[2]string{"", ""},
 			[2]string{"} / {", "older / newer commit"},
-			[2]string{"W / F / b", "whitespace, hunk filter, sidebar — as above"},
 			[2]string{"i", "ignore / show whitespace-only changes"},
 			[2]string{"+ / -", "more / less context around each hunk"},
 		)
