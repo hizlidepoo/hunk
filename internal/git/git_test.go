@@ -371,3 +371,181 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// logRepo builds a repository with a known history: three commits on main, the
+// last of which is a merge of a side branch, so the merge case is covered too.
+func logRepo(t *testing.T) *git.Repo {
+	t.Helper()
+	r := repo(t, map[string]string{"a.txt": "one\n"})
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = r.Dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+
+	writeFile(t, r.Dir, "a.txt", "one\ntwo\n")
+	run("commit", "-qam", "add two")
+
+	run("checkout", "-qb", "side")
+	writeFile(t, r.Dir, "b.txt", "side\n")
+	run("add", "-A")
+	run("commit", "-qm", "add b on the side")
+
+	run("checkout", "-q", "-")
+	run("merge", "-q", "--no-ff", "-m", "merge side", "side")
+	return r
+}
+
+// bySubject finds a commit in a log by its subject line.
+func bySubject(t *testing.T, commits []git.Commit, subject string) git.Commit {
+	t.Helper()
+	for _, c := range commits {
+		if c.Subject == subject {
+			return c
+		}
+	}
+	t.Fatalf("no commit with subject %q in %+v", subject, commits)
+	return git.Commit{}
+}
+
+func TestLogReadsHistoryNewestFirst(t *testing.T) {
+	r := logRepo(t)
+
+	commits, err := r.Log(10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 4 {
+		t.Fatalf("got %d commits, want 4", len(commits))
+	}
+
+	// Newest first, oldest last. The two commits in between were made in the
+	// same second on different branches, so git is free to order them either
+	// way and the test does not pin that down.
+	if commits[0].Subject != "merge side" {
+		t.Errorf("first commit = %q, want the merge", commits[0].Subject)
+	}
+	if commits[3].Subject != "baseline" {
+		t.Errorf("last commit = %q, want the root commit", commits[3].Subject)
+	}
+
+	c := commits[0]
+	if len(c.SHA) != 40 {
+		t.Errorf("SHA = %q, want a full hash", c.SHA)
+	}
+	if !strings.HasPrefix(c.SHA, c.Short) {
+		t.Errorf("Short %q is not a prefix of SHA %q", c.Short, c.SHA)
+	}
+	if c.Author != "hunk test" {
+		t.Errorf("Author = %q, want %q", c.Author, "hunk test")
+	}
+	if c.Date == "" || c.Rel == "" {
+		t.Errorf("Date = %q, Rel = %q, want both set", c.Date, c.Rel)
+	}
+}
+
+func TestLogLimitAndPaths(t *testing.T) {
+	r := logRepo(t)
+
+	commits, err := r.Log(2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 2 {
+		t.Fatalf("Log(2) returned %d commits, want 2", len(commits))
+	}
+
+	commits, err = r.Log(10, []string{"b.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 1 || commits[0].Subject != "add b on the side" {
+		t.Fatalf("Log for b.txt = %+v, want only the commit that adds it", commits)
+	}
+}
+
+func TestShowParsesAsADiff(t *testing.T) {
+	r := logRepo(t)
+
+	commits, err := r.Log(10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := r.Show(bySubject(t, commits, "add two").SHA, false, diff.DefaultContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "add two") {
+		t.Errorf("Show left the commit message in the diff:\n%s", text)
+	}
+
+	files, err := diff.ParseString(text)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, text)
+	}
+	if len(files) != 1 || files[0].Path() != "a.txt" {
+		t.Fatalf("Show gave %d files, want just a.txt", len(files))
+	}
+	if files[0].Added != 1 || files[0].Removed != 0 {
+		t.Errorf("a.txt +%d -%d, want +1 -0", files[0].Added, files[0].Removed)
+	}
+}
+
+// A merge commit has no diff at all unless it is asked for against one parent,
+// which is the whole reason Show passes --first-parent -m.
+func TestShowMergeCommitHasADiff(t *testing.T) {
+	r := logRepo(t)
+
+	commits, err := r.Log(10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := r.Show(commits[0].SHA, false, diff.DefaultContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := diff.ParseString(text)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, text)
+	}
+	if len(files) != 1 || files[0].Path() != "b.txt" {
+		t.Fatalf("merge commit gave %d files (%s), want b.txt", len(files), text)
+	}
+}
+
+// Show never writes: reading history leaves the tree and the index alone.
+func TestShowWritesNothing(t *testing.T) {
+	r := logRepo(t)
+
+	commits, err := r.Log(10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := gitOut(t, r, "status", "--porcelain")
+	for _, c := range commits {
+		if _, err := r.Show(c.SHA, false, diff.DefaultContext); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if after := gitOut(t, r, "status", "--porcelain"); after != before {
+		t.Errorf("status changed after reading history:\n%q\n%q", before, after)
+	}
+}
+
+// A repository with no commits yet is an empty history, not an error.
+func TestLogOnAnUnbornBranch(t *testing.T) {
+	r := repo(t, nil)
+
+	commits, err := r.Log(10, nil)
+	if err != nil {
+		t.Fatalf("Log on a repository with no commits: %v", err)
+	}
+	if len(commits) != 0 {
+		t.Errorf("got %d commits from an empty repository", len(commits))
+	}
+}

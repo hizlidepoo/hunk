@@ -8,7 +8,8 @@
 
 A standalone, themeable diff viewer for the terminal. Side-by-side, word-level
 highlighting, keyboard-driven — and when you run it inside a git repository, it
-turns into a live review pass you can stage from, hunk by hunk.
+turns into a live review pass you can stage from, hunk by hunk, or a read-only
+walk back through the commit history.
 
 Built for the diffs coding agents produce: large, spread across many files, and
 miserable to read as raw `git diff` output.
@@ -49,6 +50,8 @@ working-tree review mode below.
 
 ```sh
 hunk                     # review the working tree, and stage what you approve
+hunk log                 # walk back through the commit history, read only
+hunk log internal/ui     # only the commits that touch those paths
 git diff | hunk          # read a diff from stdin
 git show <sha> | hunk    # or any other diff-producing command
 hunk old.txt new.txt     # diff two files, no git required
@@ -77,7 +80,8 @@ Output that is piped or redirected is passed through as plain unified diff, so
 | `?` | help |
 | `q` | quit |
 
-In working-tree review mode you also get:
+In `hunk log` you also get `}` / `{` to move between commits. In working-tree
+review mode you get:
 
 | Key | Action |
 |---|---|
@@ -92,6 +96,32 @@ In working-tree review mode you also get:
 
 Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.
+
+### History
+
+`hunk log` is `git log -p` you can walk around in. The sidebar splits in two —
+the commits on top, the files of the selected commit below — so the keys nest
+the way the history does:
+
+| Key | Action |
+|---|---|
+| `}` / `{` | older / newer commit |
+| `]` / `[` | next / previous file in that commit |
+| `n` / `p` | next / previous hunk in that file |
+
+```sh
+hunk log                 # the last 50 commits
+hunk log -n 200          # more of them
+hunk log README.md       # only the commits that touch a path
+```
+
+Everything that only looks at the diff still works — search, the regex filter,
+whitespace, syntax highlighting, side-by-side, `+` / `-` context, `i`. Nothing
+that writes does: marking, staging, undo and follow are not bound at all, and
+`hunk log` has no code path that can reach the index.
+
+Merge commits show their diff against the first parent, so a merge is not a
+blank screen.
 
 Every run of changed lines is wrapped in a rounded outline that crosses from one
 pane into the other, with an arrow on the seam pointing the way the change goes.
@@ -170,7 +200,7 @@ GitHub repo. That is the whole protocol.
 ## Not in v1
 
 Reverting hunks in the working tree, reviewing already-staged changes,
-committing from inside hunk, three-way merge, syntax highlighting.
+committing from inside hunk, three-way merge, searching the commit log itself.
 See [the issues](https://github.com/wmarquardt/hunk/issues) or open one.
 
 ## Contributing

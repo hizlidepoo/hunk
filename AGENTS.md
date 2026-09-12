@@ -7,9 +7,10 @@ command changes. Keep advice specific to hunk.
 
 ## What hunk is
 
-A themeable terminal diff viewer, single Go binary. Three ways in — stdin, two
-paths, or the working tree — and one of them (the working tree) can stage what
-you approve. Module: `github.com/wmarquardt/hunk`. Go 1.26.
+A themeable terminal diff viewer, single Go binary. Four ways in — stdin, two
+paths, the working tree, or `hunk log` over the commit history — and one of them
+(the working tree) can stage what you approve. Module:
+`github.com/wmarquardt/hunk`. Go 1.26.
 
 ## Commands
 
@@ -44,6 +45,7 @@ Run it:
 
 ```sh
 cat testdata/multi.diff | go run .    # stdin path
+go run . log                          # commit history, read only
 go run . testdata/tree_a testdata/tree_b
 go run . --theme paper                # the light theme
 ```
@@ -58,8 +60,8 @@ These are the load-bearing shapes — the reasons the code is arranged the way i
 is. Package boundaries and layer rules live under Conventions.
 
 - **Everything becomes unified diff text, then is parsed once.** stdin,
-  `diff.Generate` (two paths), and `ui.GitSource` (working tree) all feed
-  `diff.ParseString` → `[]diff.File`. One interpretation of a diff, one set of
+  `diff.Generate` (two paths), `ui.GitSource` (working tree), and `git.Show`
+  (one commit) all feed `diff.ParseString` → `[]diff.File`. One interpretation of a diff, one set of
   parser tests. `diff.Generate` deliberately produces text and hands it straight
   back to the parser rather than building `[]File` directly.
 - **`ui.Build(files, split)` flattens every file into one `[]Row`**, so
@@ -94,7 +96,9 @@ is. Package boundaries and layer rules live under Conventions.
 ## Rules that are not negotiable
 
 **Staging only ever writes the index.** `git apply --cached` and `git add` are
-the only mutating commands in the codebase, both in `internal/git/git.go`. hunk
+the only mutating commands in the codebase, both in `internal/git/git.go`.
+`hunk log` cannot reach either: `m.staging()` is false there, and a test asserts
+the mark and stage keys leave the repository byte-identical. hunk
 has no code path that writes to a working-tree file. Any change near staging
 needs a test asserting the working tree is byte-identical afterwards —
 `TestStageOneHunkOfThree` is the pattern.

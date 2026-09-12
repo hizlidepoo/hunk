@@ -1,6 +1,6 @@
 // Package git is the thin layer between hunk and the git binary.
 //
-// ponytail: os/exec over a git library. This is six commands; go-git is a large
+// ponytail: os/exec over a git library. This is eight commands; go-git is a large
 // dependency, and manipulating the index by hand is exactly where a
 // reimplementation of git goes wrong. hunk shells out only here — reading a
 // diff and file/directory diffing stay git-free.
@@ -113,6 +113,62 @@ func (r *Repo) names(args ...string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+// Commit is one entry of the history, as the log panel shows it.
+type Commit struct {
+	SHA     string // full hash, what Show is called with
+	Short   string // abbreviated, what the sidebar shows
+	Author  string
+	Date    string // absolute, for the status bar
+	Rel     string // relative to now, e.g. "3 days ago"
+	Subject string
+}
+
+// logFormat prints one commit per line with NUL-separated fields, so a subject
+// containing any printable separator still parses.
+const logFormat = "--pretty=format:%H%x00%h%x00%an%x00%ad%x00%ar%x00%s"
+
+// Log reads the n most recent commits, newest first. paths, when given, narrows
+// the history to commits that touch them.
+//
+// A repository with no commits yet has an empty history, not a broken one, so
+// an unborn HEAD returns no commits rather than git's "does not have any
+// commits yet" error.
+func (r *Repo) Log(n int, paths []string) ([]Commit, error) {
+	if _, err := r.run("", "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
+		return nil, nil
+	}
+	args := []string{"log", "--no-color", "-n", strconv.Itoa(n), logFormat, "--date=short"}
+	if len(paths) > 0 {
+		args = append(append(args, "--"), paths...)
+	}
+	out, err := r.run("", args...)
+	if err != nil {
+		return nil, err
+	}
+
+	var commits []Commit
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Split(line, "\x00")
+		if len(f) < 6 {
+			continue // an empty history prints nothing at all
+		}
+		commits = append(commits, Commit{
+			SHA: f[0], Short: f[1], Author: f[2], Date: f[3], Rel: f[4], Subject: f[5],
+		})
+	}
+	return commits, nil
+}
+
+// Show returns one commit's changes as unified diff text, with the commit
+// message stripped so it parses like every other source hunk reads.
+//
+// --first-parent -m is what gives a merge commit a diff at all: without it,
+// "git show" prints a merge's header and nothing else.
+func (r *Repo) Show(sha string, ignoreWS bool, context int) (string, error) {
+	args := diffArgs(ignoreWS, context, "show", "--format=", "--first-parent", "-m")
+	return r.run("", append(args, sha)...)
 }
 
 // StageFiles stages whole files. Used for untracked files, which have no hunks
