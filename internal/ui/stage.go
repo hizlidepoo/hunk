@@ -2,9 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/wmarquardt/hunk/internal/diff"
@@ -89,7 +90,7 @@ func GitSource(r *git.Repo, ignoreWS bool, context int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sort.Strings(untracked)
+	slices.Sort(untracked)
 
 	var b strings.Builder
 	b.WriteString(text)
@@ -152,14 +153,9 @@ func (m *Model) stageMarked() (string, error) {
 			continue
 		}
 
-		selected := make([]int, 0, len(hunks))
-		for h := range hunks {
-			selected = append(selected, h)
-		}
-		sort.Ints(selected)
-		patch.WriteString(f.Patch(selected))
+		patch.WriteString(f.Patch(slices.Sorted(maps.Keys(hunks))))
 	}
-	sort.Strings(wholeFiles)
+	slices.Sort(wholeFiles)
 
 	if err := m.repo.ApplyCached(patch.String()); err != nil {
 		return "", err

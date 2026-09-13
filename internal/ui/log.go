@@ -44,7 +44,7 @@ func (m *Model) loadCommit(idx int) {
 	if !m.logMode || len(m.commits) == 0 {
 		return
 	}
-	idx = clamp(idx, 0, len(m.commits)-1)
+	idx = min(max(idx, 0), len(m.commits)-1)
 	if idx == m.commitIdx {
 		return
 	}
@@ -92,11 +92,7 @@ func (m *Model) logSplit(h int) int {
 	if avail < 2 {
 		return 0
 	}
-	n := avail / 2
-	if n > len(m.commits) {
-		n = len(m.commits)
-	}
-	return n
+	return min(avail/2, len(m.commits))
 }
 
 // renderLogSidebar draws the two stacked lists of history mode: the commits,

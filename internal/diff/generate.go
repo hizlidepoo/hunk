@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/aymanbagabas/go-udiff"
@@ -129,10 +130,7 @@ func filePatch(oldName, newName string, oldData, newData []byte, inOld, inNew bo
 }
 
 func isBinary(data []byte) bool {
-	if len(data) > binarySniff {
-		data = data[:binarySniff]
-	}
-	return bytes.IndexByte(data, 0) >= 0
+	return bytes.IndexByte(data[:min(len(data), binarySniff)], 0) >= 0
 }
 
 // walk collects every regular file under root, keyed by its path relative to root.
@@ -162,18 +160,9 @@ func walk(root string) (map[string]struct{}, error) {
 }
 
 func union(a, b map[string]struct{}) []string {
-	seen := make(map[string]struct{}, len(a)+len(b))
-	out := make([]string, 0, len(a)+len(b))
-	for _, m := range []map[string]struct{}{a, b} {
-		for k := range m {
-			if _, dup := seen[k]; !dup {
-				seen[k] = struct{}{}
-				out = append(out, k)
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
+	all := maps.Clone(a)
+	maps.Copy(all, b)
+	return slices.Sorted(maps.Keys(all))
 }
 
 // NewFilePatch renders an untracked file as an add-everything patch, so a file

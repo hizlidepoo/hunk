@@ -346,20 +346,13 @@ func (m *Model) contentWidth() int {
 	if m.wantSidebar && m.width >= minSidebarWidth {
 		w -= m.sidebarW() + 1
 	}
-	if w < 1 {
-		return 1
-	}
-	return w
+	return max(w, 1)
 }
 
 // bodyHeight is the number of diff rows on screen, leaving a line for the
 // status bar.
 func (m *Model) bodyHeight() int {
-	h := m.height - 1
-	if h < 1 {
-		return 1
-	}
-	return h
+	return max(m.height-1, 1)
 }
 
 // Update handles resizes and key presses.
@@ -470,10 +463,7 @@ func (m *Model) command(key string) tea.Cmd {
 	case "l", "right":
 		m.hscroll += 8
 	case "h", "left":
-		m.hscroll -= 8
-		if m.hscroll < 0 {
-			m.hscroll = 0
-		}
+		m.hscroll = max(m.hscroll-8, 0)
 
 	case "s":
 		m.wantSplit = !m.wantSplit
@@ -545,7 +535,7 @@ func (m *Model) changeContext(delta int) {
 	if m.repo == nil {
 		return
 	}
-	next := clamp(m.context+delta, 0, maxContext)
+	next := min(max(m.context+delta, 0), maxContext)
 	if next == m.context {
 		return
 	}
@@ -985,7 +975,7 @@ func firstLine(s string) string {
 // a file the reader did not ask for — ] and [ are how you change file.
 func (m *Model) step(delta int) {
 	lo, hi := m.fileSpan(m.cur)
-	m.moveTo(clamp(m.cur+delta, lo, hi-1))
+	m.moveTo(min(max(m.cur+delta, lo), hi-1))
 }
 
 // moveTo puts the cursor on a row, clamped to the diff, and scrolls to it.
@@ -994,7 +984,7 @@ func (m *Model) moveTo(row int) {
 		m.cur, m.top = 0, 0
 		return
 	}
-	m.cur = clamp(row, 0, len(m.view.Rows)-1)
+	m.cur = min(max(row, 0), len(m.view.Rows)-1)
 	m.ensureVisible()
 }
 
@@ -1009,11 +999,7 @@ func (m *Model) ensureVisible() {
 	if m.cur >= m.top+h {
 		m.top = m.cur - h + 1
 	}
-	maxTop := hi - h
-	if maxTop < lo {
-		maxTop = lo
-	}
-	m.top = clamp(m.top, lo, maxTop)
+	m.top = min(max(m.top, lo), max(hi-h, lo))
 }
 
 // fileSpan is the [lo, hi) row range of the file that owns row. Rows outside it
@@ -1022,9 +1008,7 @@ func (m *Model) fileSpan(row int) (lo, hi int) {
 	if len(m.view.Rows) == 0 {
 		return 0, 0
 	}
-	if row >= len(m.view.Rows) {
-		row = len(m.view.Rows) - 1
-	}
+	row = min(row, len(m.view.Rows)-1)
 	f := m.view.Rows[row].FileIdx
 	lo = m.view.FileRows[f]
 	if f+1 < len(m.view.FileRows) {
@@ -1121,14 +1105,8 @@ func (m *Model) renderScreen() string {
 // overlay floats box in the center of base, compositing so the base screen
 // shows through around it.
 func (m *Model) overlay(base, box string) string {
-	x := (m.width - lipgloss.Width(box)) / 2
-	y := (m.height - lipgloss.Height(box)) / 2
-	if x < 0 {
-		x = 0
-	}
-	if y < 0 {
-		y = 0
-	}
+	x := max((m.width-lipgloss.Width(box))/2, 0)
+	y := max((m.height-lipgloss.Height(box))/2, 0)
 	return lipgloss.NewCompositor(
 		lipgloss.NewLayer(base),
 		lipgloss.NewLayer(box).X(x).Y(y).Z(1),
@@ -1187,10 +1165,7 @@ func (m *Model) renderEmpty(w int) []string {
 			out = append(out, blank)
 			continue
 		}
-		pad := (w - lipgloss.Width(msg)) / 2
-		if pad < 0 {
-			pad = 0
-		}
+		pad := max((w-lipgloss.Width(msg))/2, 0)
 		out = append(out, fit(m.st.base.Render(strings.Repeat(" ", pad))+m.st.notice.Render(msg), 0, w, m.st.base))
 	}
 	return out
@@ -1575,7 +1550,7 @@ func (m *Model) renderStatus() string {
 		if room < 8 {
 			room = m.width - lipgloss.Width(head+tail) - 1 // no room for the hints anyway
 		}
-		left = head + clip(c.Subject, clamp(room, 8, 64)) + tail
+		left = head + clip(c.Subject, min(max(room, 8), 64)) + tail
 	}
 
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -1649,14 +1624,4 @@ func (m *Model) renderHelp() string {
 	lines = append(lines, "", m.st.notice.Render("press any key to close"))
 
 	return m.st.modal.Render(strings.Join(lines, "\n"))
-}
-
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }

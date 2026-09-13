@@ -89,12 +89,15 @@ type Loader struct {
 	// BaseURL is where github.com/... references are fetched from. Tests point
 	// this at an httptest server so no test ever touches the network.
 	BaseURL string
-	Client  *http.Client
 	// Refresh re-downloads remote themes instead of using the cached copy.
 	Refresh bool
 }
 
 const defaultBaseURL = "https://raw.githubusercontent.com"
+
+// httpClient fetches remote themes. The timeout is what keeps a hung server
+// from hanging hunk's startup.
+var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 func (l *Loader) configDir() string {
 	if l.ConfigDir != "" {
@@ -108,13 +111,6 @@ func (l *Loader) baseURL() string {
 		return l.BaseURL
 	}
 	return defaultBaseURL
-}
-
-func (l *Loader) client() *http.Client {
-	if l.Client != nil {
-		return l.Client
-	}
-	return &http.Client{Timeout: 10 * time.Second}
 }
 
 // Load resolves a theme reference, in order: an existing file path, a theme in
@@ -256,7 +252,7 @@ func (l *Loader) fetchRemote(ref string) (data []byte, source string, err error)
 }
 
 func (l *Loader) get(url string) ([]byte, error) {
-	resp, err := l.client().Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +270,3 @@ func (l *Loader) get(url string) ([]byte, error) {
 	}
 	return b, nil
 }
-
-// UserThemesDir is where a user's own theme files go. Named in the docs and in
-// hunk's error messages, so it lives next to the code that reads from it.
-func UserThemesDir() string { return filepath.Join(ConfigDir(), "themes") }

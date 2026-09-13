@@ -2,16 +2,15 @@ package diff
 
 import (
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 )
 
-// Parse reads unified diff text. Every input to hunk becomes unified diff text
-// first, so this is the only place a diff is interpreted.
-func Parse(r io.Reader) ([]File, error) {
-	gfs, _, err := gitdiff.Parse(r)
+// ParseString reads unified diff text. Every input to hunk becomes unified diff
+// text first, so this is the only place a diff is interpreted.
+func ParseString(s string) ([]File, error) {
+	gfs, _, err := gitdiff.Parse(strings.NewReader(s))
 	if err != nil {
 		return nil, fmt.Errorf("parse diff: %w", err)
 	}
@@ -22,9 +21,6 @@ func Parse(r io.Reader) ([]File, error) {
 	}
 	return files, nil
 }
-
-// ParseString is Parse for text already in memory.
-func ParseString(s string) ([]File, error) { return Parse(strings.NewReader(s)) }
 
 func convertFile(gf *gitdiff.File) File {
 	f := File{
