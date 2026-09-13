@@ -14,18 +14,8 @@ walk back through the commit history.
 Built for the diffs coding agents produce: large, spread across many files, and
 miserable to read as raw `git diff` output.
 
-```
-┌ Files ────┬ auth/token.go ───────────────────────────────────────────────────┐
-│ ● auth/…  │ @@ -18,6 +18,7 @@ func Validate(tok string) error                │
-│   +12 -4  │  18 │   if tok == "" {          │ 18 │   if tok == "" {          │
-│ ◐ ui/vie… │╭────────────────────────────────────────────────────────────────╮│
-│   +1 -0   ││ 19 │     return ErrEmpty       → 19 │     if debug {           ││
-│ · main.go │╰────────────────────────────────╮ 20 │       log(tok)           ││
-│           │                                 │ 21 │     }                    ││
-│           │                                 ╰───────────────────────────────╯│
-│           │  20 │   }                       │ 22 │   }                       │
-└───────────┴ space mark  A file  w stage  u undo  f follow  ? help  q quit ───┘
-```
+<img width="1600" height="1019" alt="image" src="https://github.com/user-attachments/assets/6c94dcc1-c9ce-4dbe-8c36-a2205bab1f8f" />
+
 
 ## Install
 
