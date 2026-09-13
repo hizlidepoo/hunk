@@ -27,8 +27,6 @@ miserable to read as raw `git diff` output.
 └───────────┴ space mark  A file  w stage  u undo  f follow  ? help  q quit ───┘
 ```
 
-> Screenshots and a demo GIF: **TODO** — the ASCII sketch above is a stand-in.
-
 ## Install
 
 ```sh
@@ -44,7 +42,8 @@ go build -o hunk .
 ```
 
 Single static binary, no runtime dependencies. Git is only needed for the
-working-tree review mode below.
+working-tree review and `hunk log` modes; reading a diff and diffing files or
+directories work without it.
 
 ## Usage
 
@@ -60,6 +59,25 @@ hunk old/ new/           # diff two directories
 
 Output that is piped or redirected is passed through as plain unified diff, so
 `hunk a b > patch.diff` does what you would expect.
+
+### Options
+
+Every flag picks the state hunk opens in; the matching key still toggles it
+during the session.
+
+| Flag | Key | Does |
+|---|---|---|
+| `--theme <ref>` | | theme name, path, or `github.com/user/repo/name` (also `HUNK_THEME`) |
+| `--theme-update` | | re-download remote themes instead of using the cache |
+| `-u`, `--unified` | `s` | open unified instead of side-by-side |
+| `--no-sidebar` | `b` | open with the file sidebar hidden |
+| `--show-whitespace` | `W` | render tabs and trailing spaces as visible marks |
+| `--no-syntax` | `H` | open with syntax highlighting off |
+| `--filter <regex>` | `F` | hide hunks whose every changed line matches |
+| `-w`, `--ignore-whitespace` | `i` | hide whitespace-only changes (git modes) |
+| `-U`, `--context <n>` | `+` / `-` | unchanged lines around each hunk (default 3) |
+| `--no-follow` | `f` | open with live-follow paused (review mode) |
+| `-n`, `--max-count <n>` | | commits to read, `hunk log` only (default 50) |
 
 ### Keys
 
@@ -79,6 +97,7 @@ Output that is piped or redirected is passed through as plain unified diff, so
 | `b` | toggle the file sidebar |
 | `?` | help |
 | `q` | quit |
+| mouse | click a file, a row, or a status-bar option; the wheel scrolls |
 
 In `hunk log` you also get `}` / `{` to move between commits. In working-tree
 review mode you get:
@@ -96,6 +115,11 @@ review mode you get:
 
 Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.
+
+The sidebar says where every file stands: `·` untouched, `◐` some hunks marked,
+`●` all of them, `✓` already staged (gray when only part of it is). Untracked
+files are shown as all-additions and staged whole, and a file you stage fully
+stays on screen with its check instead of vanishing mid-review.
 
 ### History
 
@@ -196,12 +220,6 @@ network, so a theme is downloaded once and hunk keeps working offline.
 
 To publish your own, put `.toml` files in a `themes/` directory in any public
 GitHub repo. That is the whole protocol.
-
-## Not in v1
-
-Reverting hunks in the working tree, reviewing already-staged changes,
-committing from inside hunk, three-way merge, searching the commit log itself.
-See [the issues](https://github.com/wmarquardt/hunk/issues) or open one.
 
 ## Contributing
 
