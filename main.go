@@ -29,6 +29,10 @@ usage:
 options:
 `
 
+// version is the build's version string. The release build stamps it with the
+// git tag via -ldflags; a plain `go build` leaves it as "dev".
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "hunk:", err)
@@ -66,7 +70,13 @@ func run() error {
 	noSyntax := flag.Bool("no-syntax", false, "open with syntax highlighting off")
 	maxCount := flag.Int("max-count", defaultLogCount, "commits to read (hunk log)")
 	flag.IntVar(maxCount, "n", defaultLogCount, "shorthand for -max-count")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("hunk", version)
+		return nil
+	}
 
 	if *filter != "" {
 		if _, err := regexp.Compile(*filter); err != nil {

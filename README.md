@@ -20,6 +20,15 @@ miserable to read as raw `git diff` output.
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/wmarquardt/hunk/main/install.sh | sh
+```
+
+That drops the binary in `~/.local/bin`. Set `HUNK_INSTALL_DIR` to put it
+somewhere else, or `HUNK_VERSION` to pin a release.
+
+With Go:
+
+```sh
 go install github.com/wmarquardt/hunk@latest
 ```
 

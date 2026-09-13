@@ -76,6 +76,25 @@ hooks:
 .PHONY: check
 check: fmt vet test
 
+## snapshot: build a release locally, publishing nothing
+.PHONY: snapshot
+snapshot:
+	goreleaser release --snapshot --clean
+
+## release: tag VERSION and push it — CI publishes the release
+.PHONY: release
+release:
+	@test -n "$(VERSION)" || { echo "usage: make release VERSION=v0.1.0"; exit 1; }
+	@echo "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+' \
+		|| { echo "VERSION must look like v0.1.0"; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty"; exit 1; }
+	@git rev-parse -q --verify "refs/tags/$(VERSION)" >/dev/null \
+		&& { echo "tag $(VERSION) already exists"; exit 1; } || true
+	git tag -a $(VERSION) -m "$(VERSION)"
+	@# Drop the local tag if the push fails, so a retry is not blocked by it.
+	@git push origin $(VERSION) || { git tag -d $(VERSION); exit 1; }
+	@echo "pushed $(VERSION) — watch the release at https://github.com/wmarquardt/hunk/actions"
+
 ## clean: remove build output
 .PHONY: clean
 clean:

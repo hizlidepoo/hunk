@@ -127,6 +127,23 @@ If you just want to share a theme, you do not need a PR at all: put it in a
 `themes/` directory in a public GitHub repo and people can use it with
 `hunk --theme github.com/you/your-repo/name`.
 
+## Releasing
+
+Releases are cut from a tag. Push one and GitHub Actions does the rest —
+cross-compiling, archiving, checksumming, and publishing the release notes:
+
+```sh
+make release VERSION=v0.1.0
+```
+
+That refuses to tag a dirty tree, a malformed version, or a tag that already
+exists. The build config lives in `.goreleaser.yaml`. To see what a release
+would produce without publishing anything:
+
+```sh
+make snapshot
+```
+
 ## Code of conduct
 
 This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
