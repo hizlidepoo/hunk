@@ -22,6 +22,7 @@ usage:
   hunk                     review the working tree, and stage what you approve
   hunk log                 browse the commit history, read only
   hunk log <path>...       only commits touching those paths
+  hunk version             print the version and exit
   git diff | hunk          review a diff from stdin
   hunk old.txt new.txt     diff two files
   hunk old/ new/           diff two directories
@@ -45,6 +46,12 @@ func main() {
 const defaultLogCount = 50
 
 func run() error {
+	// "hunk version" is checked before the flag package sees the arguments,
+	// the same reason stripLog runs early: flag stops at the first non-flag.
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		printVersion()
+		return nil
+	}
 	logMode := stripLog()
 
 	flag.Usage = func() {
@@ -74,7 +81,7 @@ func run() error {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("hunk", version)
+		printVersion()
 		return nil
 	}
 
@@ -133,6 +140,12 @@ func loadTheme(ref string, refresh bool) *theme.Theme {
 		return theme.Default()
 	}
 	return th
+}
+
+// printVersion writes the version string that -version and the "version"
+// subcommand both report.
+func printVersion() {
+	fmt.Println("hunk", version)
 }
 
 // stripLog takes the "log" subcommand off the argument list. The flag package

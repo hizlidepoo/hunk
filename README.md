@@ -54,6 +54,7 @@ git diff | hunk          # read a diff from stdin
 git show <sha> | hunk    # or any other diff-producing command
 hunk old.txt new.txt     # diff two files, no git required
 hunk old/ new/           # diff two directories
+hunk version             # print the version (same as --version)
 ```
 
 Output that is piped or redirected is passed through as plain unified diff, so
@@ -77,6 +78,7 @@ during the session.
 | `-U`, `--context <n>` | `+` / `-` | unchanged lines around each hunk (default 3) |
 | `--no-follow` | `f` | open with live-follow paused (review mode) |
 | `-n`, `--max-count <n>` | | commits to read, `hunk log` only (default 50) |
+| `--version` | | print the version and exit |
 
 ### Keys
 
