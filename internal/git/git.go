@@ -66,17 +66,7 @@ func diffArgs(ignoreWS bool, context int, args ...string) []string {
 
 // Untracked lists files git does not know about yet, honouring .gitignore.
 func (r *Repo) Untracked() ([]string, error) {
-	out, err := r.run("", "ls-files", "--others", "--exclude-standard")
-	if err != nil {
-		return nil, err
-	}
-	var files []string
-	for _, line := range strings.Split(out, "\n") {
-		if line != "" {
-			files = append(files, line)
-		}
-	}
-	return files, nil
+	return r.names("ls-files", "--others", "--exclude-standard")
 }
 
 // UnstagedPaths lists files with changes in the working tree that are not yet

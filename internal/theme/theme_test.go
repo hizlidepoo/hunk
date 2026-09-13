@@ -317,7 +317,7 @@ func TestFetchRemote(t *testing.T) {
 	defer srv.Close()
 
 	config := t.TempDir()
-	l := &Loader{ConfigDir: config, BaseURL: srv.URL, Client: srv.Client()}
+	l := &Loader{ConfigDir: config, BaseURL: srv.URL}
 
 	t.Run("downloads and caches", func(t *testing.T) {
 		th, _, err := l.Load("github.com/u/r/dracula")
@@ -350,7 +350,7 @@ func TestFetchRemote(t *testing.T) {
 
 	t.Run("refresh re-downloads", func(t *testing.T) {
 		before := hits
-		refresher := &Loader{ConfigDir: config, BaseURL: srv.URL, Client: srv.Client(), Refresh: true}
+		refresher := &Loader{ConfigDir: config, BaseURL: srv.URL, Refresh: true}
 		if _, _, err := refresher.Load("github.com/u/r/dracula"); err != nil {
 			t.Fatal(err)
 		}
@@ -395,7 +395,6 @@ func TestFetchRemote(t *testing.T) {
 		offline := &Loader{
 			ConfigDir: config,
 			BaseURL:   "http://127.0.0.1:1", // nothing listens here
-			Client:    srv.Client(),
 		}
 		th, _, err := offline.Load("github.com/u/r/dracula")
 		if err != nil {

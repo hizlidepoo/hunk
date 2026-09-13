@@ -64,8 +64,8 @@ func tooDifferent(changed, total int) bool {
 // than on the "alu" in the middle of it. It also keeps range edges on rune
 // boundaries, which matters the moment a line contains anything non-ASCII.
 func snap(s string, r Range) Range {
-	r.Start = clamp(r.Start, 0, len(s))
-	r.End = clamp(r.End, r.Start, len(s))
+	r.Start = min(max(r.Start, 0), len(s))
+	r.End = min(max(r.End, r.Start), len(s))
 
 	for r.Start > 0 && isWord(prevRune(s, r.Start)) && isWord(nextRune(s, r.Start)) {
 		_, size := utf8.DecodeLastRuneInString(s[:r.Start])
@@ -90,14 +90,4 @@ func nextRune(s string, i int) rune {
 
 func isWord(r rune) bool {
 	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
-}
-
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }

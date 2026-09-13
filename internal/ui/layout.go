@@ -66,14 +66,13 @@ type View struct {
 	FileRows []int
 	// HunkRows[i] is the row index of the i-th hunk across all files, in order.
 	HunkRows []int
-	Files    []diff.File
 }
 
 // Build flattens parsed files into rows. In split mode a changed line and its
 // replacement share one row; in unified mode they become two rows, so a row is
 // always exactly one line on screen either way.
 func Build(files []diff.File, split bool) *View {
-	v := &View{Files: files}
+	v := &View{}
 
 	for fi, f := range files {
 		v.FileRows = append(v.FileRows, len(v.Rows))
@@ -136,11 +135,7 @@ func hunkRows(h diff.Hunk, split bool) []Row {
 	var removed, added []diff.Line
 
 	flush := func() {
-		n := len(removed)
-		if len(added) > n {
-			n = len(added)
-		}
-		for i := 0; i < n; i++ {
+		for i := 0; i < max(len(removed), len(added)); i++ {
 			var row Row
 			row.Kind = RowPair
 			if i < len(removed) {

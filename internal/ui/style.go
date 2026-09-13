@@ -1,8 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"image/color"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -206,12 +207,12 @@ func paintSyntax(text string, ranges []diff.Range, spans []synSpan, line, word l
 	// inside/outside a change and under at most one span.
 	cuts := []int{0, len(text)}
 	for _, r := range ranges {
-		cuts = append(cuts, clampCut(r.Start, len(text)), clampCut(r.End, len(text)))
+		cuts = append(cuts, min(max(r.Start, 0), len(text)), min(max(r.End, 0), len(text)))
 	}
 	for _, s := range spans {
-		cuts = append(cuts, clampCut(s.start, len(text)), clampCut(s.end, len(text)))
+		cuts = append(cuts, min(max(s.start, 0), len(text)), min(max(s.end, 0), len(text)))
 	}
-	sort.Ints(cuts)
+	slices.Sort(cuts)
 
 	var b strings.Builder
 	for i := 0; i+1 < len(cuts); i++ {
@@ -229,16 +230,6 @@ func paintSyntax(text string, ranges []diff.Range, spans []synSpan, line, word l
 		b.WriteString(st.Render(text[a:e]))
 	}
 	return b.String()
-}
-
-func clampCut(v, hi int) int {
-	if v < 0 {
-		return 0
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 func covered(pos int, ranges []diff.Range) bool {
@@ -311,7 +302,7 @@ func (s styles) renderSide(side Side, sign string, numWidth, textWidth, hscroll 
 	if side.Kind != diff.Context {
 		numStyle = numStyle.Background(lineStyle.GetBackground())
 	}
-	gutter := numStyle.Render(padLeft(num, numWidth) + " ")
+	gutter := numStyle.Render(fmt.Sprintf("%*s ", numWidth, num))
 
 	var spans []synSpan
 	if highlight != nil {
@@ -337,11 +328,4 @@ func shiftRanges(ranges []diff.Range, by int) []diff.Range {
 		out[i] = diff.Range{Start: r.Start + by, End: r.End + by}
 	}
 	return out
-}
-
-func padLeft(s string, w int) string {
-	if len(s) >= w {
-		return s
-	}
-	return strings.Repeat(" ", w-len(s)) + s
 }
