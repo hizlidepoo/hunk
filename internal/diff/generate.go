@@ -123,8 +123,18 @@ func filePatch(oldName, newName string, oldData, newData []byte, inOld, inNew bo
 
 	edits := udiff.Strings(string(oldData), string(newData))
 	body, err := udiff.ToUnified(oldLabel, newLabel, string(oldData), edits, contextLines)
-	if err != nil || body == "" {
+	if err != nil {
 		return ""
+	}
+	if body == "" {
+		// No body means no lines changed. For a file that exists on both sides
+		// that is a no-op and there is nothing to show. For a pure add or
+		// delete it means the file is empty, and the header alone is the whole
+		// story — dropping it would hide the file from the review entirely.
+		if inOld && inNew {
+			return ""
+		}
+		return header + fmt.Sprintf("--- %s\n+++ %s\n", oldLabel, newLabel)
 	}
 	return header + body
 }

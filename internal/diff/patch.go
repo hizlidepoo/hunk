@@ -16,6 +16,19 @@ func (f File) Patch(hunks []int) string {
 		return ""
 	}
 
+	// Resolve the selection before writing anything: if no index names a real
+	// hunk there is nothing to stage, and a header on its own is a patch git
+	// apply has no business seeing.
+	selected := make([]int, 0, len(hunks))
+	for _, i := range hunks {
+		if i >= 0 && i < len(f.Hunks) {
+			selected = append(selected, i)
+		}
+	}
+	if len(selected) == 0 {
+		return ""
+	}
+
 	oldName, newName := f.OldPath, f.NewPath
 	if oldName == "" {
 		oldName = newName
@@ -42,10 +55,7 @@ func (f File) Patch(hunks []int) string {
 	}
 	fmt.Fprintf(&b, "--- %s\n+++ %s\n", oldLabel, newLabel)
 
-	for _, i := range hunks {
-		if i < 0 || i >= len(f.Hunks) {
-			continue
-		}
+	for _, i := range selected {
 		b.WriteString(f.Hunks[i].frag.String())
 	}
 	return b.String()
