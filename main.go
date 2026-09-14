@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -34,8 +35,17 @@ options:
 // git tag via -ldflags; a plain `go build` leaves it as "dev".
 var version = "dev"
 
+// errUsage means the flag package already wrote the complaint and the usage
+// text, so main exits without printing a second message. Exit code 2 is what
+// flag.ExitOnError used to produce for a bad flag, and scripts may read it.
+var errUsage = errors.New("bad usage")
+
 func main() {
-	if err := run(); err != nil {
+	err := run(os.Args, os.Stdout, os.Stderr)
+	if errors.Is(err, errUsage) {
+		os.Exit(2)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "hunk:", err)
 		os.Exit(1)
 	}
@@ -45,43 +55,51 @@ func main() {
 // to browse, shallow enough to open instantly in a repository with a long past.
 const defaultLogCount = 50
 
-func run() error {
+// run is the whole program with its outside world passed in, so a test can
+// drive it with an argument list and two buffers instead of a terminal.
+func run(args []string, stdout, stderr io.Writer) error {
 	// "hunk version" is checked before the flag package sees the arguments,
 	// the same reason stripLog runs early: flag stops at the first non-flag.
-	if len(os.Args) > 1 && os.Args[1] == "version" {
-		printVersion()
+	if len(args) > 1 && args[1] == "version" {
+		printVersion(stdout)
 		return nil
 	}
-	logMode := stripLog()
+	logMode, args := stripLog(args)
 
-	flag.Usage = func() {
-		fmt.Fprint(os.Stderr, usage)
-		flag.PrintDefaults()
+	// A local FlagSet rather than the global one: flags are registered on every
+	// call, and re-registering on flag.CommandLine would panic the second time.
+	fs := flag.NewFlagSet("hunk", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		_, _ = fmt.Fprint(stderr, usage)
+		fs.PrintDefaults()
 	}
-	themeRef := flag.String("theme", os.Getenv("HUNK_THEME"),
+	themeRef := fs.String("theme", os.Getenv("HUNK_THEME"),
 		"theme name, path, or github.com/user/repo/name reference")
-	themeUpdate := flag.Bool("theme-update", false, "re-download remote themes instead of using the cache")
+	themeUpdate := fs.Bool("theme-update", false, "re-download remote themes instead of using the cache")
 
 	// View filters, each mirroring an in-app toggle. Short forms share the same
 	// variable so -w and -ignore-whitespace are the same flag.
-	ignoreWS := flag.Bool("ignore-whitespace", false, "hide whitespace-only changes (git review mode)")
-	flag.BoolVar(ignoreWS, "w", false, "shorthand for -ignore-whitespace")
-	unified := flag.Bool("unified", false, "open unified instead of side-by-side")
-	flag.BoolVar(unified, "u", false, "shorthand for -unified")
-	noSidebar := flag.Bool("no-sidebar", false, "open with the file sidebar hidden")
-	noFollow := flag.Bool("no-follow", false, "open with live-follow paused (git review mode)")
-	context := flag.Int("context", diff.DefaultContext, "unchanged lines shown around each hunk")
-	flag.IntVar(context, "U", diff.DefaultContext, "shorthand for -context")
-	showWS := flag.Bool("show-whitespace", false, "render tabs and trailing spaces as visible marks")
-	filter := flag.String("filter", "", "hide hunks whose every changed line matches this regex")
-	noSyntax := flag.Bool("no-syntax", false, "open with syntax highlighting off")
-	maxCount := flag.Int("max-count", defaultLogCount, "commits to read (hunk log)")
-	flag.IntVar(maxCount, "n", defaultLogCount, "shorthand for -max-count")
-	showVersion := flag.Bool("version", false, "print the version and exit")
-	flag.Parse()
+	ignoreWS := fs.Bool("ignore-whitespace", false, "hide whitespace-only changes (git review mode)")
+	fs.BoolVar(ignoreWS, "w", false, "shorthand for -ignore-whitespace")
+	unified := fs.Bool("unified", false, "open unified instead of side-by-side")
+	fs.BoolVar(unified, "u", false, "shorthand for -unified")
+	noSidebar := fs.Bool("no-sidebar", false, "open with the file sidebar hidden")
+	noFollow := fs.Bool("no-follow", false, "open with live-follow paused (git review mode)")
+	context := fs.Int("context", diff.DefaultContext, "unchanged lines shown around each hunk")
+	fs.IntVar(context, "U", diff.DefaultContext, "shorthand for -context")
+	showWS := fs.Bool("show-whitespace", false, "render tabs and trailing spaces as visible marks")
+	filter := fs.String("filter", "", "hide hunks whose every changed line matches this regex")
+	noSyntax := fs.Bool("no-syntax", false, "open with syntax highlighting off")
+	maxCount := fs.Int("max-count", defaultLogCount, "commits to read (hunk log)")
+	fs.IntVar(maxCount, "n", defaultLogCount, "shorthand for -max-count")
+	showVersion := fs.Bool("version", false, "print the version and exit")
+	if err := fs.Parse(args[1:]); err != nil {
+		return errUsage
+	}
 
 	if *showVersion {
-		printVersion()
+		printVersion(stdout)
 		return nil
 	}
 
@@ -91,7 +109,7 @@ func run() error {
 		}
 	}
 
-	th := loadTheme(*themeRef, *themeUpdate)
+	th := loadTheme(*themeRef, *themeUpdate, stderr)
 	opts := ui.Options{
 		IgnoreWS:  *ignoreWS,
 		Unified:   *unified,
@@ -103,7 +121,9 @@ func run() error {
 		NoSyntax:  *noSyntax,
 	}
 
-	repo, commits, text, err := source(logMode, flag.Args(), opts.IgnoreWS, opts.Context, *maxCount)
+	// An empty repo directory means the process's own working directory, which
+	// is what a real invocation wants; tests pass a throwaway repository.
+	repo, commits, text, err := source(logMode, fs.Args(), "", opts.IgnoreWS, opts.Context, *maxCount, fs.Usage)
 	if err != nil {
 		return err
 	}
@@ -115,7 +135,7 @@ func run() error {
 	// Piped or redirected output means hunk is part of a pipeline, not a
 	// viewer: hand over the diff and stay out of the way.
 	if !term.IsTerminal(os.Stdout.Fd()) {
-		_, err := io.WriteString(os.Stdout, text)
+		_, err := io.WriteString(stdout, text)
 		return err
 	}
 
@@ -129,14 +149,14 @@ func run() error {
 }
 
 // loadTheme never fails the run: a broken theme costs you colors, not your diff.
-func loadTheme(ref string, refresh bool) *theme.Theme {
+func loadTheme(ref string, refresh bool, stderr io.Writer) *theme.Theme {
 	th, warnings, err := (&theme.Loader{Refresh: refresh}).Load(ref)
 	for _, w := range warnings {
-		fmt.Fprintln(os.Stderr, "hunk:", w)
+		_, _ = fmt.Fprintln(stderr, "hunk:", w)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "hunk:", err)
-		fmt.Fprintln(os.Stderr, "hunk: falling back to the default theme")
+		_, _ = fmt.Fprintln(stderr, "hunk:", err)
+		_, _ = fmt.Fprintln(stderr, "hunk: falling back to the default theme")
 		return theme.Default()
 	}
 	return th
@@ -144,27 +164,31 @@ func loadTheme(ref string, refresh bool) *theme.Theme {
 
 // printVersion writes the version string that -version and the "version"
 // subcommand both report.
-func printVersion() {
-	fmt.Println("hunk", version)
+func printVersion(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "hunk", version)
 }
 
-// stripLog takes the "log" subcommand off the argument list. The flag package
-// stops at the first non-flag argument, so it has to go before flags are parsed
-// or "hunk log -n 200" would never see -n.
-func stripLog() bool {
-	if len(os.Args) > 1 && os.Args[1] == "log" {
-		os.Args = append(os.Args[:1], os.Args[2:]...)
-		return true
+// stripLog takes the "log" subcommand off the argument list, returning the
+// remaining arguments. The flag package stops at the first non-flag argument,
+// so it has to go before flags are parsed or "hunk log -n 200" would never
+// see -n.
+func stripLog(args []string) (bool, []string) {
+	if len(args) > 1 && args[1] == "log" {
+		rest := make([]string, 0, len(args)-1)
+		rest = append(rest, args[0])
+		rest = append(rest, args[2:]...)
+		return true, rest
 	}
-	return false
+	return false, args
 }
 
 // source produces unified diff text from wherever this invocation gets it. A
 // non-nil repo means the diff came from a git repository; a non-nil commit list
-// means it is that repository's history, which hunk only ever reads.
-func source(logMode bool, args []string, ignoreWS bool, context, maxCommits int) (*git.Repo, []git.Commit, string, error) {
+// means it is that repository's history, which hunk only ever reads. repoDir is
+// where git runs; empty means the current directory.
+func source(logMode bool, args []string, repoDir string, ignoreWS bool, context, maxCommits int, usage func()) (*git.Repo, []git.Commit, string, error) {
 	if logMode {
-		repo := &git.Repo{}
+		repo := &git.Repo{Dir: repoDir}
 		if !git.Available() || !repo.IsRepo() {
 			return nil, nil, "", fmt.Errorf("not in a git repository: hunk log reads a repository's history")
 		}
@@ -188,9 +212,9 @@ func source(logMode bool, args []string, ignoreWS bool, context, maxCommits int)
 			return nil, nil, string(b), err
 		}
 
-		repo := &git.Repo{}
+		repo := &git.Repo{Dir: repoDir}
 		if !git.Available() || !repo.IsRepo() {
-			flag.Usage()
+			usage()
 			return nil, nil, "", fmt.Errorf("not in a git repository: pipe a diff in, or name two paths")
 		}
 		// A clean working tree is not an error: hunk follows the tree live, so
@@ -203,7 +227,7 @@ func source(logMode bool, args []string, ignoreWS bool, context, maxCommits int)
 		return nil, nil, text, err
 
 	default:
-		flag.Usage()
+		usage()
 		return nil, nil, "", fmt.Errorf("expected two paths, got %d", len(args))
 	}
 }

@@ -200,3 +200,36 @@ func TestGenerateMissingPath(t *testing.T) {
 		t.Fatal("want an error for a missing path")
 	}
 }
+
+// An untracked file that is empty still has to show up in a review: without a
+// patch it never reaches the screen, so there is no way to see it or stage it.
+func TestNewFilePatchOnAnEmptyFile(t *testing.T) {
+	patch := NewFilePatch("empty.txt", nil)
+	if patch == "" {
+		t.Fatal("NewFilePatch on an empty file returned nothing, so the file cannot be reviewed")
+	}
+	for _, want := range []string{
+		"diff --git a/empty.txt b/empty.txt\n",
+		"new file mode 100644\n",
+		"--- /dev/null\n",
+		"+++ b/empty.txt\n",
+	} {
+		if !strings.Contains(patch, want) {
+			t.Errorf("patch is missing %q:\n%s", want, patch)
+		}
+	}
+
+	files, err := ParseString(patch)
+	if err != nil {
+		t.Fatalf("the patch does not parse: %v\n---\n%s", err, patch)
+	}
+	if len(files) != 1 {
+		t.Fatalf("got %d files, want 1", len(files))
+	}
+	if !files[0].IsNew {
+		t.Error("IsNew = false, want true")
+	}
+	if len(files[0].Hunks) != 0 {
+		t.Errorf("got %d hunks, want 0: an empty file has no lines to change", len(files[0].Hunks))
+	}
+}

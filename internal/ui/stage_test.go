@@ -618,3 +618,117 @@ func pacedSpace(m *Model) func() {
 		now = now.Add(2 * markRepeat)
 	}
 }
+
+// An untracked file with no content still has to reach the review. It produces
+// no hunks, so like a binary file it can only be staged whole — but if the
+// patch for it comes back empty the file never appears at all and there is no
+// way to stage it from hunk.
+func TestEmptyUntrackedFileIsReviewableAndStageable(t *testing.T) {
+	m, repo := gitModel(t,
+		map[string]string{"tracked.txt": lines(10)},
+		map[string]string{"empty.txt": ""},
+	)
+
+	idx := -1
+	for i, f := range m.files {
+		if f.Path() == "empty.txt" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		var paths []string
+		for _, f := range m.files {
+			paths = append(paths, f.Path())
+		}
+		t.Fatalf("the empty untracked file is missing from the review: %v", paths)
+	}
+	if !m.files[idx].IsNew {
+		t.Error("the empty file should be shown as a new file")
+	}
+	if len(m.files[idx].Hunks) != 0 {
+		t.Errorf("got %d hunks, want 0: an empty file has no lines", len(m.files[idx].Hunks))
+	}
+
+	// A file with no hunks is marked whole, the same path binary files take.
+	m.marks = marks{}
+	m.marks.set(idx, wholeFile, true)
+	if _, err := m.stageMarked(); err != nil {
+		t.Fatalf("staging the empty file: %v", err)
+	}
+
+	cached := gitOut(t, repo, "diff", "--cached", "--name-only")
+	if !strings.Contains(cached, "empty.txt") {
+		t.Errorf("the empty file did not reach the index:\n%s", cached)
+	}
+
+	// Staging writes the index only; the file is still there and still empty.
+	got, err := os.ReadFile(filepath.Join(repo.Dir, "empty.txt"))
+	if err != nil {
+		t.Fatalf("staging removed the working-tree file: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("staging wrote %q into the working-tree file", got)
+	}
+}
+
+// f pauses and resumes live-follow. Resuming has to catch the screen up on
+// whatever changed while it was paused, which is why it reloads immediately
+// instead of waiting for the next filesystem event.
+func TestToggleFollowPausesAndResumes(t *testing.T) {
+	base := lines(20)
+	m, repo := gitModel(t, map[string]string{"a.txt": base}, nil)
+
+	if !m.live {
+		t.Fatal("git review mode should open following the tree")
+	}
+
+	if cmd := m.toggleFollow(); cmd != nil {
+		t.Error("pausing should not re-arm the watcher")
+	}
+	if m.live {
+		t.Error("live = true after pausing")
+	}
+	if !strings.Contains(m.msg, "paused") {
+		t.Errorf("status = %q, want it to say following is paused", m.msg)
+	}
+
+	// Change the tree while paused; the view must not have caught up yet.
+	if err := os.WriteFile(filepath.Join(repo.Dir, "a.txt"), []byte(replaceLine(base, 3, "WHILE_PAUSED")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.files) != 0 {
+		t.Error("a paused view picked up a change on its own")
+	}
+
+	cmd := m.toggleFollow()
+	if !m.live {
+		t.Error("live = false after resuming")
+	}
+	if cmd == nil {
+		t.Error("resuming did not re-arm the watcher")
+	}
+	if len(m.files) != 1 {
+		t.Fatalf("resuming loaded %d files, want the one that changed", len(m.files))
+	}
+	var body strings.Builder
+	for _, h := range m.files[0].Hunks {
+		for _, l := range h.Lines {
+			body.WriteString(l.Text)
+		}
+	}
+	if !strings.Contains(body.String(), "WHILE_PAUSED") {
+		t.Errorf("resuming did not catch up on the change made while paused:\n%s", body.String())
+	}
+}
+
+// Without a watcher there is nothing to follow, so the key is inert — a plain
+// diff from a pipe must not pretend to be live.
+func TestToggleFollowWithoutAWatcher(t *testing.T) {
+	m := newTestModel(t, sample)
+	if cmd := m.toggleFollow(); cmd != nil {
+		t.Error("toggleFollow returned a command without a watcher")
+	}
+	if m.live {
+		t.Error("a plain diff should never be live")
+	}
+}

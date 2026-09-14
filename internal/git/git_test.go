@@ -71,6 +71,16 @@ func gitOut(t *testing.T, r *git.Repo, args ...string) string {
 // and stages exactly those — the same path the TUI takes when you press w.
 func stage(t *testing.T, r *git.Repo, pick func(path string, hunk int) bool) {
 	t.Helper()
+	patch := buildPatch(t, r, pick)
+	if err := r.ApplyCached(patch); err != nil {
+		t.Fatalf("staging failed: %v\npatch:\n%s", err, patch)
+	}
+}
+
+// buildPatch renders the patch that stage would apply, without applying it.
+// Undo tests need the patch text itself to hand back to UnapplyCached.
+func buildPatch(t *testing.T, r *git.Repo, pick func(path string, hunk int) bool) string {
+	t.Helper()
 
 	text, err := r.Diff(false, 3)
 	if err != nil {
@@ -91,10 +101,7 @@ func stage(t *testing.T, r *git.Repo, pick func(path string, hunk int) bool) {
 		}
 		patch.WriteString(f.Patch(selected))
 	}
-
-	if err := r.ApplyCached(patch.String()); err != nil {
-		t.Fatalf("staging failed: %v\npatch:\n%s", err, patch.String())
-	}
+	return patch.String()
 }
 
 func all(string, int) bool  { return true }
@@ -528,5 +535,266 @@ func TestLogOnAnUnbornBranch(t *testing.T) {
 	}
 	if len(commits) != 0 {
 		t.Errorf("got %d commits from an empty repository", len(commits))
+	}
+}
+
+// UnapplyCached is the undo behind the stage key, and its promise is that it
+// takes back exactly what was staged. Nothing tested that before, so this walks
+// the full round trip: stage a hunk, take it back, and confirm the index is
+// clean again and the working tree never moved.
+func TestUnapplyCachedTakesTheStageBackOut(t *testing.T) {
+	base := numbered(60)
+	r := repo(t, map[string]string{"a.txt": base})
+
+	edited := change(base, 5, "FIRST")
+	edited = change(edited, 30, "SECOND")
+	writeFile(t, r.Dir, "a.txt", edited)
+
+	patch := buildPatch(t, r, only(0))
+	if err := r.ApplyCached(patch); err != nil {
+		t.Fatalf("staging failed: %v\npatch:\n%s", err, patch)
+	}
+	if cached := gitOut(t, r, "diff", "--cached"); !strings.Contains(cached, "FIRST") {
+		t.Fatalf("setup did not stage the hunk:\n%s", cached)
+	}
+
+	if err := r.UnapplyCached(patch); err != nil {
+		t.Fatalf("UnapplyCached: %v\npatch:\n%s", err, patch)
+	}
+
+	if cached := gitOut(t, r, "diff", "--cached"); strings.TrimSpace(cached) != "" {
+		t.Errorf("the index still holds something after the undo:\n%s", cached)
+	}
+	if unstaged := gitOut(t, r, "diff"); !strings.Contains(unstaged, "FIRST") || !strings.Contains(unstaged, "SECOND") {
+		t.Errorf("the undo lost a working-tree change:\n%s", unstaged)
+	}
+
+	// Undo writes the index only, exactly like the stage it reverses.
+	got, err := os.ReadFile(filepath.Join(r.Dir, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != edited {
+		t.Error("UnapplyCached modified the working-tree file")
+	}
+}
+
+// The "and nothing else" half of the promise: undoing one stage must leave an
+// earlier, unrelated stage sitting in the index untouched.
+func TestUnapplyCachedLeavesOtherStagedHunksAlone(t *testing.T) {
+	base := numbered(60)
+	r := repo(t, map[string]string{"a.txt": base})
+
+	edited := change(base, 5, "FIRST")
+	edited = change(edited, 30, "SECOND")
+	writeFile(t, r.Dir, "a.txt", edited)
+
+	// Stage the two hunks as two separate operations, the way pressing the
+	// stage key twice would, and keep only the second patch to undo.
+	first := buildPatch(t, r, only(0))
+	if err := r.ApplyCached(first); err != nil {
+		t.Fatalf("staging the first hunk: %v", err)
+	}
+	second := buildPatch(t, r, all)
+	if err := r.ApplyCached(second); err != nil {
+		t.Fatalf("staging the second hunk: %v", err)
+	}
+
+	if err := r.UnapplyCached(second); err != nil {
+		t.Fatalf("UnapplyCached: %v\npatch:\n%s", err, second)
+	}
+
+	cached := gitOut(t, r, "diff", "--cached")
+	if !strings.Contains(cached, "FIRST") {
+		t.Errorf("the undo took back a hunk it was not given:\n%s", cached)
+	}
+	if strings.Contains(cached, "SECOND") {
+		t.Errorf("the undo left its own hunk in the index:\n%s", cached)
+	}
+}
+
+func TestUnapplyCachedEmptyPatchIsANoOp(t *testing.T) {
+	base := numbered(20)
+	r := repo(t, map[string]string{"a.txt": base})
+	writeFile(t, r.Dir, "a.txt", change(base, 3, "CHANGED"))
+	stage(t, r, all)
+
+	for _, patch := range []string{"", "   \n\t\n"} {
+		if err := r.UnapplyCached(patch); err != nil {
+			t.Errorf("UnapplyCached(%q) = %v, want no error", patch, err)
+		}
+	}
+	if cached := gitOut(t, r, "diff", "--cached"); !strings.Contains(cached, "CHANGED") {
+		t.Errorf("a blank undo emptied the index:\n%s", cached)
+	}
+}
+
+func TestUnapplyCachedRejectsABadPatch(t *testing.T) {
+	r := repo(t, map[string]string{"a.txt": "one\n"})
+
+	err := r.UnapplyCached("this is not a patch\n")
+	if err == nil {
+		t.Fatal("UnapplyCached accepted a patch that is not a diff")
+	}
+	if !strings.Contains(err.Error(), "git apply") {
+		t.Errorf("error does not name the failing command: %v", err)
+	}
+}
+
+// UnstagedPaths and StagedPaths are how the file list decides what to show and
+// what to put a check beside, so the split between them has to be exact.
+func TestStagedAndUnstagedPaths(t *testing.T) {
+	base := numbered(20)
+	r := repo(t, map[string]string{"a.txt": base, "b.txt": base})
+
+	writeFile(t, r.Dir, "a.txt", change(base, 3, "STAGED"))
+	stage(t, r, all)
+	writeFile(t, r.Dir, "b.txt", change(base, 3, "UNSTAGED"))
+
+	staged, err := r.StagedPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(staged) != 1 || staged[0] != "a.txt" {
+		t.Errorf("StagedPaths = %v, want [a.txt]", staged)
+	}
+
+	unstaged, err := r.UnstagedPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unstaged) != 1 || unstaged[0] != "b.txt" {
+		t.Errorf("UnstagedPaths = %v, want [b.txt]", unstaged)
+	}
+}
+
+// Both listings come back nil, not an empty slice, when git prints nothing.
+func TestPathListingsAreNilWhenThereIsNothing(t *testing.T) {
+	r := repo(t, map[string]string{"a.txt": "one\n"})
+
+	staged, err := r.StagedPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staged != nil {
+		t.Errorf("StagedPaths = %v, want nil on a clean repo", staged)
+	}
+
+	unstaged, err := r.UnstagedPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unstaged != nil {
+		t.Errorf("UnstagedPaths = %v, want nil on a clean repo", unstaged)
+	}
+}
+
+// StagedDiff is what keeps a fully staged file on screen instead of vanishing
+// from the review once it has no unstaged changes left.
+func TestStagedDiff(t *testing.T) {
+	base := numbered(20)
+	r := repo(t, map[string]string{"a.txt": base, "b.txt": base})
+
+	writeFile(t, r.Dir, "a.txt", change(base, 3, "AAA"))
+	writeFile(t, r.Dir, "b.txt", change(base, 3, "BBB"))
+	stage(t, r, all)
+
+	text, err := r.StagedDiff([]string{"a.txt"}, false, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "AAA") {
+		t.Errorf("staged diff is missing the file's change:\n%s", text)
+	}
+	if strings.Contains(text, "BBB") {
+		t.Errorf("staged diff includes a path that was not asked for:\n%s", text)
+	}
+
+	// No paths means no git call at all, and an empty diff rather than the
+	// whole index — asking for nothing must not quietly return everything.
+	empty, err := r.StagedDiff(nil, false, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty != "" {
+		t.Errorf("StagedDiff(nil) = %q, want empty", empty)
+	}
+}
+
+func TestStagedDiffIgnoringWhitespace(t *testing.T) {
+	r := repo(t, map[string]string{"a.txt": "one\ntwo\n"})
+	writeFile(t, r.Dir, "a.txt", "one   \ntwo\n")
+	stage(t, r, all)
+
+	text, err := r.StagedDiff([]string{"a.txt"}, true, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "@@") {
+		t.Errorf("a whitespace-only change survived -w:\n%s", text)
+	}
+}
+
+// UnstageFiles is the undo for a whole-file stage, which is how untracked files
+// are staged: they have no hunks to pick between.
+func TestUnstageFiles(t *testing.T) {
+	r := repo(t, map[string]string{"a.txt": "one\n"})
+	writeFile(t, r.Dir, "new.txt", "fresh\n")
+
+	if err := r.StageFiles([]string{"new.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if cached := gitOut(t, r, "diff", "--cached", "--name-only"); !strings.Contains(cached, "new.txt") {
+		t.Fatalf("setup did not stage the file:\n%s", cached)
+	}
+
+	if err := r.UnstageFiles([]string{"new.txt"}); err != nil {
+		t.Fatalf("UnstageFiles: %v", err)
+	}
+	if cached := gitOut(t, r, "diff", "--cached", "--name-only"); strings.TrimSpace(cached) != "" {
+		t.Errorf("the file is still in the index:\n%s", cached)
+	}
+
+	// The file goes back to being untracked; it is not deleted from the tree.
+	if _, err := os.Stat(filepath.Join(r.Dir, "new.txt")); err != nil {
+		t.Errorf("UnstageFiles removed the working-tree file: %v", err)
+	}
+	untracked, err := r.Untracked()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(untracked, "new.txt") {
+		t.Errorf("the file did not return to untracked: %v", untracked)
+	}
+}
+
+func TestUnstageNothingIsANoOp(t *testing.T) {
+	r := repo(t, map[string]string{"a.txt": "one\n"})
+	writeFile(t, r.Dir, "a.txt", "two\n")
+	stage(t, r, all)
+
+	if err := r.UnstageFiles(nil); err != nil {
+		t.Errorf("UnstageFiles(nil) = %v, want no error", err)
+	}
+	if cached := gitOut(t, r, "diff", "--cached"); !strings.Contains(cached, "two") {
+		t.Errorf("unstaging nothing emptied the index:\n%s", cached)
+	}
+}
+
+// On an unborn branch there is no HEAD to restore from. Undo has to surface
+// that as an error rather than pretending the unstage worked.
+func TestUnstageFilesOnAnUnbornBranch(t *testing.T) {
+	r := repo(t, nil)
+	writeFile(t, r.Dir, "new.txt", "fresh\n")
+	if err := r.StageFiles([]string{"new.txt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := r.UnstageFiles([]string{"new.txt"})
+	if err == nil {
+		t.Skip("this git restores from an unborn HEAD without complaining")
+	}
+	if !strings.Contains(err.Error(), "git restore") {
+		t.Errorf("error does not name the failing command: %v", err)
 	}
 }

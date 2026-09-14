@@ -147,3 +147,38 @@ func itoa3(n int) string {
 	}
 	return string(d)
 }
+
+// Intraline ranges are computed against the line text, but the rendered row has
+// a +/- sign in front of it. shiftRanges moves them over so the highlight lands
+// on the changed words and not one column to their left.
+func TestShiftRanges(t *testing.T) {
+	ranges := []diff.Range{{Start: 0, End: 3}, {Start: 5, End: 9}}
+
+	got := shiftRanges(ranges, 1)
+	want := []diff.Range{{Start: 1, End: 4}, {Start: 6, End: 10}}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("range %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	// The input is left alone: the same ranges are reused for the other side.
+	if ranges[0] != (diff.Range{Start: 0, End: 3}) {
+		t.Errorf("shiftRanges modified its input: %+v", ranges[0])
+	}
+}
+
+func TestShiftRangesWithNothingToDo(t *testing.T) {
+	ranges := []diff.Range{{Start: 2, End: 4}}
+
+	// A zero shift hands the same slice straight back rather than copying it.
+	if got := shiftRanges(ranges, 0); len(got) != 1 || got[0] != ranges[0] {
+		t.Errorf("shiftRanges(_, 0) = %+v, want the input unchanged", got)
+	}
+	if got := shiftRanges(nil, 3); got != nil {
+		t.Errorf("shiftRanges(nil, 3) = %+v, want nil", got)
+	}
+	if got := shiftRanges([]diff.Range{}, 3); len(got) != 0 {
+		t.Errorf("shiftRanges(empty, 3) = %+v, want empty", got)
+	}
+}
