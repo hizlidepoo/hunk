@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -406,9 +407,71 @@ func TestFetchRemote(t *testing.T) {
 	})
 }
 
-func TestConfigDirRespectsEnv(t *testing.T) {
-	t.Setenv("HUNK_CONFIG_DIR", "/tmp/hunk-test-config")
-	if got := ConfigDir(); got != "/tmp/hunk-test-config" {
-		t.Errorf("ConfigDir() = %q", got)
+// ConfigDir decides where user themes live, and the override order matters:
+// HUNK_CONFIG_DIR is the escape hatch tests and packagers use, XDG_CONFIG_HOME
+// is the platform convention, and ~/.config/hunk is the fallback.
+func TestConfigDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows resolves the config dir through os.UserConfigDir")
+	}
+
+	t.Run("HUNK_CONFIG_DIR wins", func(t *testing.T) {
+		t.Setenv("HUNK_CONFIG_DIR", "/tmp/explicit")
+		t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
+		if got := ConfigDir(); got != "/tmp/explicit" {
+			t.Errorf("ConfigDir() = %q, want the explicit override", got)
+		}
+	})
+
+	t.Run("XDG_CONFIG_HOME is next", func(t *testing.T) {
+		t.Setenv("HUNK_CONFIG_DIR", "")
+		t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
+		if got := ConfigDir(); got != filepath.Join("/tmp/xdg", "hunk") {
+			t.Errorf("ConfigDir() = %q, want the XDG path with hunk appended", got)
+		}
+	})
+
+	t.Run("the home directory is the fallback", func(t *testing.T) {
+		t.Setenv("HUNK_CONFIG_DIR", "")
+		t.Setenv("XDG_CONFIG_HOME", "")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Skip("no home directory in this environment")
+		}
+		if got := ConfigDir(); got != filepath.Join(home, ".config", "hunk") {
+			t.Errorf("ConfigDir() = %q, want ~/.config/hunk", got)
+		}
+	})
+}
+
+// A theme reference written with ~ is a path a shell would have expanded, so
+// hunk expands it itself when the reference comes from a config file or an
+// environment variable.
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory in this environment")
+	}
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "a tilde path is expanded", in: "~/themes/mine.toml", want: filepath.Join(home, "themes/mine.toml")},
+		{name: "a bare tilde is left alone", in: "~", want: "~"},
+		{name: "a tilde user is left alone", in: "~other/mine.toml", want: "~other/mine.toml"},
+		{name: "an absolute path is untouched", in: "/etc/hunk/mine.toml", want: "/etc/hunk/mine.toml"},
+		{name: "a relative path is untouched", in: "themes/mine.toml", want: "themes/mine.toml"},
+		{name: "a bare name is untouched", in: "hunk-dark", want: "hunk-dark"},
+		{name: "an empty string is untouched", in: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := expandHome(tt.in); got != tt.want {
+				t.Errorf("expandHome(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
