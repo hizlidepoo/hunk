@@ -798,3 +798,17 @@ func TestUnstageFilesOnAnUnbornBranch(t *testing.T) {
 		t.Errorf("error does not name the failing command: %v", err)
 	}
 }
+
+func TestRootIsTheWorkingTreeTop(t *testing.T) {
+	r := repo(t, map[string]string{"sub/a.txt": "a\n"})
+	sub := &git.Repo{Dir: filepath.Join(r.Dir, "sub")}
+
+	got, err := sub.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := filepath.EvalSymlinks(r.Dir)
+	if got, _ = filepath.EvalSymlinks(got); got != want {
+		t.Errorf("Root() from sub/ = %q, want %q", got, want)
+	}
+}

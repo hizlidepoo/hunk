@@ -33,6 +33,9 @@ type styles struct {
 	sidebarSel lipgloss.Style
 	modal      lipgloss.Style
 	modalTitle lipgloss.Style
+	// toast is the small box that floats at the top of the screen for a moment
+	// to say something went wrong.
+	toast lipgloss.Style
 	// focusRail draws the vertical "current hunk" accent in the left margin;
 	// focusHeader lights up that hunk's @@ line so the active block is obvious.
 	focusRail   lipgloss.Style
@@ -74,6 +77,7 @@ func newStyles(t *theme.Theme) styles {
 		sidebarSel:  lipgloss.NewStyle().Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)),
 		modal:       base.Border(lipgloss.ThickBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.UI.Accent)).Padding(0, 2),
 		modalTitle:  base.Foreground(c(t.UI.FileHeader)).Bold(true),
+		toast:       base.Border(lipgloss.RoundedBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.Diff.RemovedFg)).Padding(0, 1),
 		focusRail:   base.Foreground(c(t.UI.Accent)).Bold(true),
 		focusHeader: base.Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)).Bold(true),
 		railMarked:  base.Foreground(c(t.Diff.AddedFg)).Bold(true),

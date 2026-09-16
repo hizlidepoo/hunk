@@ -206,6 +206,13 @@ func (r *Repo) UnstageFiles(paths []string) error {
 	return err
 }
 
+// Root is the top of the working tree, which the paths in a diff are relative
+// to.
+func (r *Repo) Root() (string, error) {
+	out, err := r.run("", "rev-parse", "--show-toplevel")
+	return strings.TrimSpace(out), err
+}
+
 // Available reports whether the git binary is on PATH at all.
 func Available() bool {
 	_, err := exec.LookPath("git")
