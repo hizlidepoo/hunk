@@ -260,7 +260,7 @@ func TestFullyStagedFileStaysWithGreenCheck(t *testing.T) {
 	)
 
 	// Approve the whole file, then stage it.
-	m.handleKey(keyPress("A"))
+	m.handleKey(keyPress("a"))
 	m.handleKey(keyPress("w"))
 
 	// The file has no unstaged changes left, yet it must not vanish.
@@ -499,17 +499,17 @@ func TestMarkWholeFileKeys(t *testing.T) {
 
 	m, _ := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": edited})
 
-	m.handleKey(keyPress("A"))
+	m.handleKey(keyPress("a"))
 	if got := m.marks.inFile(0); got != 2 {
-		t.Errorf("A marked %d hunks, want both", got)
+		t.Errorf("a marked %d hunks, want both", got)
 	}
 	if got := m.marks.state(0, m.files[0]); got != fileAllMarked {
 		t.Errorf("file state = %v, want fully marked", got)
 	}
 
-	m.handleKey(keyPress("D"))
+	m.handleKey(keyPress("d"))
 	if hunks, _ := m.marks.total(); hunks != 0 {
-		t.Errorf("D left %d marks", hunks)
+		t.Errorf("d left %d marks", hunks)
 	}
 }
 
@@ -517,7 +517,7 @@ func TestMarkKeysDoNothingWithoutARepo(t *testing.T) {
 	m := newTestModel(t, sample)
 	screen(t, m, 140, 20)
 
-	for _, k := range []string{" ", "a", "A", "w", "u"} {
+	for _, k := range []string{" ", "a", "d", "w", "u"} {
 		m.handleKey(keyPress(k))
 	}
 	if m.marks != nil {

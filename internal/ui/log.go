@@ -101,19 +101,15 @@ func (m *Model) renderLogSidebar(h, w int) []string {
 	cn := m.logSplit(h)
 	out := make([]string, 0, h)
 
-	out = append(out, m.sidebarHeader("Commits", w))
+	focus := m.panelFocus()
+	out = append(out, m.sidebarHeader("Commits", w, focus == focusCommits))
 	start := listStart(m.commitIdx, cn)
 	for i := 0; i < cn; i++ {
 		out = append(out, m.commitLine(start+i, w))
 	}
 
-	out = append(out, m.sidebarHeader("Files", w))
-	fh := h - cn - 2
-	fstart := listStart(m.currentFile(), fh)
-	for i := 0; i < fh; i++ {
-		out = append(out, m.fileLine(fstart+i, w))
-	}
-	return out
+	out = append(out, m.sidebarHeader("Files", w, focus == focusTree))
+	return append(out, m.renderTree(h-cn-2, w)...)
 }
 
 // logSidebarAt maps a sidebar row to what is drawn there: a commit, a file, or
@@ -128,8 +124,7 @@ func (m *Model) logSidebarAt(y int) (commit, file int) {
 			return idx, -1
 		}
 	default:
-		fh := h - cn - 2
-		if idx := listStart(m.currentFile(), fh) + y - cn - 2; idx < len(m.files) {
+		if idx := m.treeFileAt(y-cn-2, h-cn-2); idx >= 0 {
 			return -1, idx
 		}
 	}
@@ -151,16 +146,20 @@ func (m *Model) commitLine(idx, w int) string {
 }
 
 // sidebarHeader titles one of the two lists, in the same border color as the
-// rule that separates the sidebar from the diff.
-func (m *Model) sidebarHeader(label string, w int) string {
+// rule that separates the sidebar from the diff, or in the accent while that
+// list has focus.
+func (m *Model) sidebarHeader(label string, w int, focused bool) string {
+	style := m.st.gutter
+	if focused {
+		style = m.st.focusRail
+	}
 	text := "── " + label + " "
 	if pad := w - lipgloss.Width(text); pad > 0 {
 		text += strings.Repeat("─", pad)
 	}
-	return fit(m.st.gutter.Render(text), 0, w, m.st.gutter)
+	return fit(style.Render(text), 0, w, m.st.gutter)
 }
 
-// clip shortens text from the right, which is where a commit subject gets less
-// informative. shortPath does the opposite for paths, where the tail names the
-// file.
+// clip shortens text from the right, which is where a commit subject or a
+// file name in the tree gets less informative.
 func clip(s string, w int) string { return ansi.Truncate(s, w, "…") }

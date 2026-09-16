@@ -131,6 +131,7 @@ func TestFlagsAreAccepted(t *testing.T) {
 		{"-ignore-whitespace"}, {"-w"},
 		{"-unified"}, {"-u"},
 		{"-no-sidebar"}, {"-no-follow"},
+		{"-sidebar-width", "0"}, {"-sidebar-width", "20"}, {"-sidebar-width", "48"},
 		{"-context", "1"}, {"-U", "1"},
 		{"-show-whitespace"}, {"-no-syntax"},
 		{"-filter", "CHANGED"},
@@ -191,6 +192,22 @@ func TestBadFilterPatternIsRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "bad -filter pattern") {
 		t.Errorf("error = %v, want it to name the filter flag", err)
+	}
+}
+
+// A sidebar width outside the range is refused up front, naming the flag,
+// rather than silently clamped into something the user did not ask for.
+func TestSidebarWidthOutOfRangeIsRejected(t *testing.T) {
+	old, newer := twoFiles(t)
+	for _, w := range []string{"19", "49", "-4"} {
+		_, _, err := runArgs(t, "-sidebar-width", w, old, newer)
+		if err == nil {
+			t.Errorf("run accepted -sidebar-width %s", w)
+			continue
+		}
+		if !strings.Contains(err.Error(), "bad -sidebar-width") {
+			t.Errorf("-sidebar-width %s: error = %v, want it to name the flag", w, err)
+		}
 	}
 }
 
