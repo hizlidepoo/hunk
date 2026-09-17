@@ -129,7 +129,7 @@ type Model struct {
 	lastMark   [2]int
 	lastMarkAt time.Time
 
-	// toastText floats in a box at the top of the screen until toastUntil.
+	// toastText floats in a box centered on screen until toastUntil.
 	toastText  string
 	toastUntil time.Time
 
@@ -1106,7 +1106,7 @@ func (m *Model) render() string {
 	}
 	if m.toastText != "" {
 		box := m.st.toast.Render(clip(m.toastText, max(m.width-4, 1)))
-		screen = m.float(screen, box, m.width-lipgloss.Width(box)-1, 0)
+		screen = m.float(screen, box, (m.width-lipgloss.Width(box))/2, (m.height-lipgloss.Height(box))/2)
 	}
 	return screen
 }
@@ -1144,7 +1144,7 @@ const toastFor = 4 * time.Second
 // toastDoneMsg is the tick that takes a toast back down.
 type toastDoneMsg struct{}
 
-// toast floats text in a box at the top right for a few seconds. It is for
+// toast floats text in a box centered on screen for a few seconds. It is for
 // things the user has to notice, where the status line is too easy to miss.
 func (m *Model) toast(text string) tea.Cmd {
 	m.toastText, m.toastUntil = text, m.clock().Add(toastFor)

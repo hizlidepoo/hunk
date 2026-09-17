@@ -109,7 +109,7 @@ func TestEditOnlyInTheWorkingTree(t *testing.T) {
 	}
 }
 
-// With no $EDITOR, e does not guess: a toast at the top of the screen says what
+// With no $EDITOR, e does not guess: a toast centered on the screen says what
 // to set, and goes away on its own.
 func TestEditWithoutEditorShowsAToast(t *testing.T) {
 	t.Setenv("EDITOR", "")
@@ -122,8 +122,8 @@ func TestEditWithoutEditorShowsAToast(t *testing.T) {
 		t.Fatal("no tick to take the toast down")
 	}
 	lines := screen(t, m, 140, 24)
-	if !strings.Contains(strings.Join(lines[:3], "\n"), "$EDITOR is not set") {
-		t.Errorf("toast not at the top of the screen:\n%s", strings.Join(lines[:3], "\n"))
+	if !strings.Contains(strings.Join(lines, "\n"), "$EDITOR is not set") {
+		t.Errorf("toast not on screen:\n%s", strings.Join(lines, "\n"))
 	}
 	if len(lines) != 24 {
 		t.Errorf("toast changed the screen height to %d", len(lines))
