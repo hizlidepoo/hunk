@@ -550,8 +550,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorDoneMsg:
 		// Whatever was saved should be on screen now, followed or not.
 		m.liveReload()
+		name := editorName(msg.editor)
 		if msg.err != nil {
-			return m, m.toast("editor: " + firstLine(msg.err.Error()))
+			if msg.exitCode == 127 && name != "" {
+				return m, m.toast(fmt.Sprintf("`%s` not found — check $VISUAL / $EDITOR", name))
+			}
+			if name == "" {
+				name = "editor"
+			}
+			return m, m.toast(name + ": " + firstLine(msg.err.Error()))
+		}
+		if msg.elapsed < 500*time.Millisecond && (name == "code" || name == "subl" || name == "zed") && !strings.Contains(msg.editor, "--wait") {
+			return m, m.toast(fmt.Sprintf("`%s` returned immediately — try EDITOR='%s --wait'", name, msg.editor))
+		}
+		if msg.path != "" {
+			return m, m.toast("reloaded " + msg.path)
 		}
 		return m, nil
 

@@ -6,13 +6,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 // editorDoneMsg arrives when the editor e opened has exited and hunk has the
 // terminal back.
-type editorDoneMsg struct{ err error }
+type editorDoneMsg struct {
+	err      error
+	editor   string
+	path     string
+	exitCode int
+	elapsed  time.Duration
+}
 
 // openEditor hands the terminal to the user's editor on the file under the
 // cursor, at the line the cursor is on. Only the working tree is on disk as it
@@ -34,7 +41,20 @@ func (m *Model) openEditor() tea.Cmd {
 		return m.toast("edit failed: " + firstLine(err.Error()))
 	}
 	cmd := editorCmd(editor, filepath.Join(root, f.Path()), m.editLine())
-	return tea.ExecProcess(cmd, func(err error) tea.Msg { return editorDoneMsg{err} })
+	started := time.Now()
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		exitCode := 0
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
+		return editorDoneMsg{
+			err:      err,
+			editor:   editor,
+			path:     f.Path(),
+			exitCode: exitCode,
+			elapsed:  time.Since(started),
+		}
+	})
 }
 
 func configuredEditor() string {
