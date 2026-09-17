@@ -91,20 +91,20 @@ func TestEditorCmdRunsTheEditor(t *testing.T) {
 func TestEditOnlyInTheWorkingTree(t *testing.T) {
 	plain := newTestModel(t, sample)
 	screen(t, plain, 140, 20)
-	if plain.command("e") != nil {
+	if plain.command("E") != nil {
 		t.Error("e opened an editor for a plain diff")
 	}
 
 	log, _ := logModel(t)
 	screen(t, log, 140, 20)
-	if log.command("e") != nil {
+	if log.command("E") != nil {
 		t.Error("e opened an editor in history mode")
 	}
 
 	t.Setenv("EDITOR", "true")
 	base := lines(10)
 	m, _ := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": replaceLine(base, 3, "X")})
-	if m.command("e") == nil || m.toastText != "" {
+	if m.command("E") == nil || m.toastText != "" {
 		t.Errorf("e did not open the editor in the working tree (toast %q)", m.toastText)
 	}
 }
@@ -118,7 +118,7 @@ func TestEditWithoutEditorShowsAToast(t *testing.T) {
 	now := time.Now()
 	m.clock = func() time.Time { return now }
 
-	if m.command("e") == nil {
+	if m.command("E") == nil {
 		t.Fatal("no tick to take the toast down")
 	}
 	lines := screen(t, m, 140, 24)
@@ -150,7 +150,7 @@ func TestEditDeletedFileSaysSo(t *testing.T) {
 	m.liveReload()
 	m.moveTo(0)
 
-	m.command("e")
+	m.command("E")
 	if !strings.Contains(m.toastText, "deleted") {
 		t.Errorf("toast = %q, want it to say the file is deleted", m.toastText)
 	}

@@ -110,12 +110,12 @@ review mode you get:
 | `A` / `D` | mark / unmark every hunk in this file |
 | `w` | stage what is marked |
 | `u` | undo the last stage |
-| `e` | edit the file in your editor, at the cursor's line |
+| `E` | edit the file in your editor, at the cursor's line |
 | `f` | pause / resume following the working tree |
 | `i` | ignore / show whitespace-only changes |
 | `+` / `-` | more / less context around each hunk |
 
-`e` suspends hunk and opens the file in `$EDITOR`, at the line under the
+`E` suspends hunk and opens the file in `$EDITOR`, at the line under the
 cursor. Quit the editor and hunk comes back with the diff re-read and your marks
 and place kept. With `$EDITOR` unset, hunk says so instead of guessing.
 
