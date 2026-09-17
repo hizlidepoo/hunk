@@ -49,13 +49,11 @@ func configuredEditor() string {
 func editorCmd(editor, path string, line int) *exec.Cmd {
 	n := strconv.Itoa(line)
 	args := []string{"+" + n, path}
-	if name := editorName(editor); name != "" {
-		switch name {
-		case "code":
-			args = []string{"--goto", path + ":" + n}
-		case "hx", "subl", "zed":
-			args = []string{path + ":" + n}
-		}
+	switch editorName(editor) {
+	case "code":
+		args = []string{"--goto", path + ":" + n}
+	case "hx", "subl", "zed":
+		args = []string{path + ":" + n}
 	}
 	shellArgs := []string{"-c", editor + ` "$@"`, editor}
 	return exec.Command("sh", append(shellArgs, args...)...)
