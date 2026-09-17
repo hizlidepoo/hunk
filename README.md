@@ -113,9 +113,14 @@ review mode you get:
 | `a` / `d` | mark / unmark every hunk in this file |
 | `w` | stage what is marked |
 | `u` | undo the last stage |
+| `E` | edit the file in your editor, at the cursor's line |
 | `f` | pause / resume following the working tree |
 | `i` | ignore / show whitespace-only changes |
 | `+` / `-` | more / less context around each hunk |
+
+`E` suspends hunk and opens the file in `$EDITOR`, at the line under the
+cursor. Quit the editor and hunk comes back with the diff re-read and your marks
+and place kept. With `$EDITOR` unset, hunk says so instead of guessing.
 
 Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.

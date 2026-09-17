@@ -153,6 +153,10 @@ type Model struct {
 	lastMark   [2]int
 	lastMarkAt time.Time
 
+	// toastText floats in a box centered on screen until toastUntil.
+	toastText  string
+	toastUntil time.Time
+
 	// hints are the clickable option zones on the status bar, rebuilt on every
 	// render so mouse hit-testing matches exactly what is on screen.
 	hints []hintZone
@@ -530,6 +534,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseWheelMsg:
 		return m.handleWheel(msg)
 
+	case editorDoneMsg:
+		// Whatever was saved should be on screen now, followed or not.
+		m.liveReload()
+		if msg.err != nil {
+			return m, m.toast("editor: " + firstLine(msg.err.Error()))
+		}
+		return m, nil
+
+	case toastDoneMsg:
+		// A newer toast may have replaced the one this tick was for.
+		if !m.clock().Before(m.toastUntil) {
+			m.toastText = ""
+		}
+		return m, nil
+
 	case fsDirtyMsg:
 		// The tree changed. Reload while preserving marks and cursor, then wait
 		// for the next change. If following was paused since this fired, drop it.
@@ -666,6 +685,9 @@ func (m *Model) command(key string) tea.Cmd {
 		}
 	case "?":
 		m.showHelp = true
+
+	case "E":
+		return m.openEditor()
 
 	case "space", "a", "d", "w", "u":
 		if m.staging() {
@@ -1244,7 +1266,12 @@ func (m *Model) render() string {
 	screen := m.renderScreen()
 	if m.showHelp {
 		// The help is a modal: the diff stays visible behind a centered box.
-		return m.overlay(screen, m.renderHelp())
+		box := m.renderHelp()
+		screen = m.float(screen, box, (m.width-lipgloss.Width(box))/2, (m.height-lipgloss.Height(box))/2)
+	}
+	if m.toastText != "" {
+		box := m.st.toast.Render(clip(m.toastText, max(m.width-4, 1)))
+		screen = m.float(screen, box, (m.width-lipgloss.Width(box))/2, (m.height-lipgloss.Height(box))/2)
 	}
 	return screen
 }
@@ -1274,15 +1301,26 @@ func (m *Model) renderScreen() string {
 	return strings.Join(lines, "\n")
 }
 
-// overlay floats box in the center of base, compositing so the base screen
-// shows through around it.
-func (m *Model) overlay(base, box string) string {
-	x := max((m.width-lipgloss.Width(box))/2, 0)
-	y := max((m.height-lipgloss.Height(box))/2, 0)
+// float draws box over base at column x, row y, compositing so the base
+// screen shows through around it.
+func (m *Model) float(base, box string, x, y int) string {
 	return lipgloss.NewCompositor(
 		lipgloss.NewLayer(base),
-		lipgloss.NewLayer(box).X(x).Y(y).Z(1),
+		lipgloss.NewLayer(box).X(max(x, 0)).Y(max(y, 0)).Z(1),
 	).Render()
+}
+
+// toastFor is how long a toast stays on screen.
+const toastFor = 4 * time.Second
+
+// toastDoneMsg is the tick that takes a toast back down.
+type toastDoneMsg struct{}
+
+// toast floats text in a box centered on screen for a few seconds. It is for
+// things the user has to notice, where the status line is too easy to miss.
+func (m *Model) toast(text string) tea.Cmd {
+	m.toastText, m.toastUntil = text, m.clock().Add(toastFor)
+	return tea.Tick(toastFor, func(time.Time) tea.Msg { return toastDoneMsg{} })
 }
 
 // renderBody renders exactly the visible window of rows. Everything off screen
@@ -1824,6 +1862,7 @@ func (m *Model) renderHelp() string {
 			[2]string{"a / d", "mark / unmark every hunk in this file"},
 			[2]string{"w", "stage what is marked"},
 			[2]string{"u", "undo the last stage"},
+			[2]string{"E", "edit this file at the cursor in $EDITOR"},
 			[2]string{"f", "pause / resume following file changes"},
 			[2]string{"i", "ignore / show whitespace-only changes"},
 			[2]string{"+ / -", "more / less context around each hunk"},
