@@ -147,7 +147,7 @@ func TestLogIsReadOnly(t *testing.T) {
 	}
 
 	before := gitState(t, repo)
-	for _, key := range []string{"space", "a", "d", "A", "D", "w", "u"} {
+	for _, key := range []string{"space", "a", "d", "w", "u"} {
 		m.command(key)
 	}
 	if after := gitState(t, repo); after != before {

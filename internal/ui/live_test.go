@@ -99,7 +99,7 @@ func TestLiveReloadWholeFileMarkStaysWhole(t *testing.T) {
 	m, repo := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": edited})
 
 	// Mark the whole file (two hunks).
-	m.handleKey(keyPress("A"))
+	m.handleKey(keyPress("a"))
 	if got := m.marks.inFile(0); got != 2 {
 		t.Fatalf("A marked %d hunks, want 2", got)
 	}

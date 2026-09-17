@@ -31,8 +31,11 @@ type styles struct {
 	help       lipgloss.Style
 	sidebar    lipgloss.Style
 	sidebarSel lipgloss.Style
-	modal      lipgloss.Style
-	modalTitle lipgloss.Style
+	// sidebarDirSel marks a selected directory: muted, so it reads as a place in
+	// the tree rather than something with a diff to show.
+	sidebarDirSel lipgloss.Style
+	modal         lipgloss.Style
+	modalTitle    lipgloss.Style
 	// toast is the small box that floats centered on the screen for a moment
 	// to say something went wrong.
 	toast lipgloss.Style
@@ -46,8 +49,11 @@ type styles struct {
 
 	// stagedFg / partialFg color the sidebar check: green when a file is fully
 	// staged, gray when only some of it is.
-	stagedFg    color.Color
-	partialFg   color.Color
+	stagedFg  color.Color
+	partialFg color.Color
+	// addedFg / removedFg color the +N -N counts in the sidebar.
+	addedFg     color.Color
+	removedFg   color.Color
 	context     lipgloss.Style
 	added       lipgloss.Style
 	removed     lipgloss.Style
@@ -65,32 +71,35 @@ func newStyles(t *theme.Theme) styles {
 	base := lipgloss.NewStyle().Background(c(t.UI.Background)).Foreground(c(t.UI.Foreground))
 
 	return styles{
-		base:        base,
-		fileHeader:  base.Foreground(c(t.UI.FileHeader)).Bold(true),
-		hunkHeader:  base.Foreground(c(t.UI.Accent)),
-		notice:      base.Foreground(c(t.UI.LineNumber)).Italic(true),
-		lineNum:     base.Foreground(c(t.UI.LineNumber)),
-		gutter:      base.Foreground(c(t.UI.Border)),
-		statusbar:   lipgloss.NewStyle().Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)),
-		help:        base.Foreground(c(t.UI.Foreground)),
-		sidebar:     base.Foreground(c(t.UI.SidebarFg)),
-		sidebarSel:  lipgloss.NewStyle().Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)),
-		modal:       base.Border(lipgloss.ThickBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.UI.Accent)).Padding(0, 2),
-		modalTitle:  base.Foreground(c(t.UI.FileHeader)).Bold(true),
-		toast:       base.Border(lipgloss.ThickBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.Diff.RemovedFg)).Padding(0, 1),
-		focusRail:   base.Foreground(c(t.UI.Accent)).Bold(true),
-		focusHeader: base.Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)).Bold(true),
-		railMarked:  base.Foreground(c(t.Diff.AddedFg)).Bold(true),
-		stagedFg:    c(t.Diff.AddedFg),
-		partialFg:   c(t.UI.LineNumber),
-		context:     base.Foreground(c(t.Diff.ContextFg)),
-		added:       base.Background(c(t.Diff.AddedBg)).Foreground(c(t.Diff.AddedFg)),
-		removed:     base.Background(c(t.Diff.RemovedBg)).Foreground(c(t.Diff.RemovedFg)),
-		addedWord:   base.Background(c(t.Diff.AddedWordBg)).Foreground(c(t.Diff.AddedFg)).Bold(true),
-		removedWord: base.Background(c(t.Diff.RemovedWordBg)).Foreground(c(t.Diff.RemovedFg)).Bold(true),
-		filler:      base.Foreground(c(t.UI.Border)),
-		cursor:      base.Foreground(c(t.UI.Accent)).Bold(true),
-		box:         base.Foreground(c(t.UI.Accent)),
+		base:          base,
+		fileHeader:    base.Foreground(c(t.UI.FileHeader)).Bold(true),
+		hunkHeader:    base.Foreground(c(t.UI.Accent)),
+		notice:        base.Foreground(c(t.UI.LineNumber)).Italic(true),
+		lineNum:       base.Foreground(c(t.UI.LineNumber)),
+		gutter:        base.Foreground(c(t.UI.Border)),
+		statusbar:     lipgloss.NewStyle().Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)),
+		help:          base.Foreground(c(t.UI.Foreground)),
+		sidebar:       base.Foreground(c(t.UI.SidebarFg)),
+		sidebarSel:    lipgloss.NewStyle().Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)),
+		sidebarDirSel: lipgloss.NewStyle().Background(c(t.UI.Border)).Foreground(c(t.UI.SidebarFg)),
+		modal:         base.Border(lipgloss.ThickBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.UI.Accent)).Padding(0, 2),
+		modalTitle:    base.Foreground(c(t.UI.FileHeader)).Bold(true),
+		toast:         base.Border(lipgloss.ThickBorder()).BorderBackground(c(t.UI.Background)).BorderForeground(c(t.Diff.RemovedFg)).Padding(0, 1),
+		focusRail:     base.Foreground(c(t.UI.Accent)).Bold(true),
+		focusHeader:   base.Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)).Bold(true),
+		railMarked:    base.Foreground(c(t.Diff.AddedFg)).Bold(true),
+		stagedFg:      c(t.Diff.AddedFg),
+		addedFg:       c(t.Diff.AddedFg),
+		removedFg:     c(t.Diff.RemovedFg),
+		partialFg:     c(t.UI.LineNumber),
+		context:       base.Foreground(c(t.Diff.ContextFg)),
+		added:         base.Background(c(t.Diff.AddedBg)).Foreground(c(t.Diff.AddedFg)),
+		removed:       base.Background(c(t.Diff.RemovedBg)).Foreground(c(t.Diff.RemovedFg)),
+		addedWord:     base.Background(c(t.Diff.AddedWordBg)).Foreground(c(t.Diff.AddedFg)).Bold(true),
+		removedWord:   base.Background(c(t.Diff.RemovedWordBg)).Foreground(c(t.Diff.RemovedFg)).Bold(true),
+		filler:        base.Foreground(c(t.UI.Border)),
+		cursor:        base.Foreground(c(t.UI.Accent)).Bold(true),
+		box:           base.Foreground(c(t.UI.Accent)),
 	}
 }
 

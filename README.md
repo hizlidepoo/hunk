@@ -71,6 +71,7 @@ during the session.
 | `--theme-update` | | re-download remote themes instead of using the cache |
 | `-u`, `--unified` | `s` | open unified instead of side-by-side |
 | `--no-sidebar` | `b` | open with the file sidebar hidden |
+| `--sidebar-width <n>` | `shift+←` / `shift+→` | sidebar width in columns, 20–48 (default 28, 36 in `hunk log`) |
 | `--show-whitespace` | `W` | render tabs and trailing spaces as visible marks |
 | `--no-syntax` | `H` | open with syntax highlighting off |
 | `--filter <regex>` | `F` | hide hunks whose every changed line matches |
@@ -84,7 +85,7 @@ during the session.
 
 | Key | Action |
 |---|---|
-| `j` / `k`, ↑ / ↓ | scroll a line |
+| `j` / `k`, ↑ / ↓ | scroll a line, or move in the focused sidebar panel |
 | `ctrl-d` / `ctrl-u` | scroll half a page |
 | `n` / `p` | next / previous hunk |
 | `]` / `[` | next / previous file |
@@ -96,6 +97,9 @@ during the session.
 | `h` / `l`, ← / → | scroll sideways |
 | `s` | toggle side-by-side / unified |
 | `b` | toggle the file sidebar |
+| `shift+←` / `shift+→` | narrow / widen the sidebar |
+| `ctrl+w` | move focus between the diff and the sidebar |
+| `space`, `-` / `+` | on a sidebar folder: toggle, fold / unfold it |
 | `?` | help |
 | `q` | quit |
 | mouse | click a file, a row, or a status-bar option; the wheel scrolls |
@@ -106,8 +110,7 @@ review mode you get:
 | Key | Action |
 |---|---|
 | `space` | mark this hunk and move to the next one in the file |
-| `a` / `d` | mark / unmark, then jump to the next hunk |
-| `A` / `D` | mark / unmark every hunk in this file |
+| `a` / `d` | mark / unmark every hunk in this file, or every file in a selected folder |
 | `w` | stage what is marked |
 | `u` | undo the last stage |
 | `E` | edit the file in your editor, at the cursor's line |
@@ -124,7 +127,20 @@ both variables unset, hunk says so instead of guessing.
 Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.
 
-The sidebar says where every file stands: `·` untouched, `◐` some hunks marked,
+The sidebar is the changed files as a directory tree, in alphabetical order —
+the same order `]` / `[` walk. `ctrl+w` moves focus to it (its rule lights up),
+after which `j` / `k` and ↑ / ↓ move line by line, folders included; every other
+key still works on the diff, and `ctrl+w` again or a click in the diff hands
+focus back. A folder under the cursor gets a muted bar instead of the accent —
+it has no diff of its own — and a `-` or `+`: `space` toggles it, `-` folds it,
+`+` unfolds it. `a` / `d` on a folder mark and unmark every file under it, the
+same keys as on a file, one level up. A folded folder keeps its `+`, and stands
+in for any hidden file
+that `]` / `[` land on. `]` / `[` and clicks only ever pick files. Folders turn
+green once every file under them is approved — all of its hunks marked, or
+fully staged, or staged with the rest marked.
+
+Each file line says where it stands: `·` untouched, `◐` some hunks marked,
 `●` all of them, `✓` already staged (gray when only part of it is). Untracked
 files are shown as all-additions and staged whole, and a file you stage fully
 stays on screen with its check instead of vanishing mid-review.
@@ -140,6 +156,10 @@ the way the history does:
 | `}` / `{` | older / newer commit |
 | `]` / `[` | next / previous file in that commit |
 | `n` / `p` | next / previous hunk in that file |
+| `ctrl+w` | focus the diff, then the commits, then the files |
+
+With the commits or the files focused (their header lights up), `j` / `k` and
+↑ / ↓ move through that list.
 
 ```sh
 hunk log                 # the last 50 commits

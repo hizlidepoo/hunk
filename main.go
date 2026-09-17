@@ -85,6 +85,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	unified := fs.Bool("unified", false, "open unified instead of side-by-side")
 	fs.BoolVar(unified, "u", false, "shorthand for -unified")
 	noSidebar := fs.Bool("no-sidebar", false, "open with the file sidebar hidden")
+	sidebarWidth := fs.Int("sidebar-width", 0,
+		fmt.Sprintf("sidebar width in columns, %d to %d (0 picks the default)", ui.SidebarWidthMin, ui.SidebarWidthMax))
 	noFollow := fs.Bool("no-follow", false, "open with live-follow paused (git review mode)")
 	context := fs.Int("context", diff.DefaultContext, "unchanged lines shown around each hunk")
 	fs.IntVar(context, "U", diff.DefaultContext, "shorthand for -context")
@@ -109,6 +111,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
+	if w := *sidebarWidth; w != 0 && (w < ui.SidebarWidthMin || w > ui.SidebarWidthMax) {
+		return fmt.Errorf("bad -sidebar-width %d: want 0 or %d to %d", w, ui.SidebarWidthMin, ui.SidebarWidthMax)
+	}
+
 	th := loadTheme(*themeRef, *themeUpdate, stderr)
 	opts := ui.Options{
 		IgnoreWS:  *ignoreWS,
@@ -119,6 +125,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		ShowWS:    *showWS,
 		Filter:    *filter,
 		NoSyntax:  *noSyntax,
+
+		SidebarWidth: *sidebarWidth,
 	}
 
 	// An empty repo directory means the process's own working directory, which

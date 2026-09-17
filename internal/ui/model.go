@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -28,6 +29,10 @@ const (
 	// logSidebarWidth is the sidebar in history mode, where it carries a short
 	// sha and a subject as well as the file list.
 	logSidebarWidth = 36
+	// sidebarStep is how far shift+← / shift+→ move the sidebar's edge.
+	sidebarStep = 4
+	// minDiffWidth is how much room a wide sidebar must always leave the diff.
+	minDiffWidth = 60
 	// minSidebarWidth is the total terminal width below which the sidebar is
 	// hidden: past this point it costs more than it tells you.
 	minSidebarWidth = 100
@@ -38,6 +43,13 @@ const (
 	// has room for who wrote the commit as well as the key hints.
 	logAuthorWidth = 160
 	numWidth       = 5
+)
+
+// SidebarWidthMin and SidebarWidthMax bound the sidebar width a user can pick
+// with --sidebar-width or shift+← / shift+→.
+const (
+	SidebarWidthMin = 20
+	SidebarWidthMax = 48
 )
 
 // Model is the whole TUI state.
@@ -57,6 +69,18 @@ type Model struct {
 	wantSplit   bool
 	wantSidebar bool
 	builtSplit  bool
+
+	// sideWidth is the sidebar width the user picked; 0 means the mode's default.
+	sideWidth int
+
+	// focus is the panel ↑ / ↓ and j / k act on. ctrl+w cycles it.
+	focus panel
+
+	// collapsed holds the directory paths folded shut in the tree. treeDir is the
+	// directory the tree cursor rests on, or "" when it is on the current file;
+	// it only counts while the tree has focus.
+	collapsed map[string]bool
+	treeDir   string
 
 	showHelp bool
 
@@ -138,6 +162,15 @@ type Model struct {
 	hints []hintZone
 }
 
+// panel is one of the screen's focusable areas.
+type panel int
+
+const (
+	focusDiff panel = iota
+	focusCommits
+	focusTree
+)
+
 // hintZone maps a horizontal span of the status bar to the key its label
 // stands for, so a click on the label does what the key does.
 type hintZone struct {
@@ -157,6 +190,8 @@ type Options struct {
 	ShowWS    bool   // --show-whitespace: render tabs and trailing spaces as marks
 	Filter    string // --filter: hide hunks whose every changed line matches this regex
 	NoSyntax  bool   // --no-syntax: open with syntax highlighting off
+	// SidebarWidth is --sidebar-width: the sidebar's columns, 0 for the default.
+	SidebarWidth int
 }
 
 // New builds a model over an already-parsed diff.
@@ -170,6 +205,7 @@ func New(files []diff.File, t *theme.Theme, opts Options) *Model {
 		st:          newStyles(t),
 		wantSplit:   !opts.Unified,
 		wantSidebar: !opts.NoSidebar,
+		sideWidth:   opts.SidebarWidth,
 		builtSplit:  !opts.Unified,
 		ignoreWS:    opts.IgnoreWS,
 		context:     context,
@@ -199,7 +235,12 @@ func compileFilter(src string) (*regexp.Regexp, string) {
 }
 
 // applyFilter recomputes the visible files from raw and the active filter.
-func (m *Model) applyFilter() { m.files = filterFiles(m.raw, m.filter) }
+// The files are put in tree order first, so the file list, the sidebar and
+// ] / [ all agree on what comes next.
+func (m *Model) applyFilter() {
+	sortFiles(m.raw)
+	m.files = filterFiles(m.raw, m.filter)
+}
 
 // filterFiles drops every hunk whose changed lines all match re, and every file
 // left with no hunks. A nil re shows everything. Binary/hunkless files are kept
@@ -325,12 +366,141 @@ func RunGit(repo *git.Repo, files []diff.File, t *theme.Theme, opts Options) err
 // is a repo session that cannot: the past is not something to stage.
 func (m *Model) staging() bool { return m.repo != nil && !m.logMode }
 
-// sidebarW is the sidebar width for this mode.
+// sidebarW is the sidebar width: what the user picked, or this mode's default,
+// shrunk if needed so the diff keeps minDiffWidth columns.
 func (m *Model) sidebarW() int {
-	if m.logMode {
-		return logSidebarWidth
+	w := m.sideWidth
+	switch {
+	case w > 0:
+	case m.logMode:
+		w = logSidebarWidth
+	default:
+		w = sidebarWidth
 	}
-	return sidebarWidth
+	if m.width > 0 {
+		w = min(w, m.width-1-minDiffWidth)
+	}
+	return max(w, 1)
+}
+
+// resizeSidebar widens (dir 1) or narrows (dir -1) the sidebar a step, keeping
+// the cursor where it is even if the diff has to switch between split and
+// unified to fit.
+func (m *Model) resizeSidebar(dir int) {
+	m.sideWidth = min(max(m.sidebarW()+dir*sidebarStep, SidebarWidthMin), SidebarWidthMax)
+	m.rebuildIfNeeded()
+	m.ensureVisible()
+	m.msg = fmt.Sprintf("sidebar: %d columns", m.sidebarW())
+}
+
+// panelFocus is the panel that has focus right now. A panel that is hidden or
+// has nothing in it cannot hold focus, so it falls back to the diff.
+func (m *Model) panelFocus() panel {
+	if m.focusable(m.focus) {
+		return m.focus
+	}
+	return focusDiff
+}
+
+func (m *Model) focusable(p panel) bool {
+	switch p {
+	case focusTree:
+		return m.sidebar() && len(m.files) > 0
+	case focusCommits:
+		return m.logMode && m.sidebar() && m.logSplit(m.bodyHeight()) > 0
+	default:
+		return true
+	}
+}
+
+// cycleFocus moves focus to the next panel that can take it: diff, commits
+// (history mode only), then the file tree, and back to the diff.
+func (m *Model) cycleFocus() {
+	order := []panel{focusDiff, focusCommits, focusTree}
+	at := slices.Index(order, m.panelFocus())
+	m.treeDir = ""
+	for i := 1; i <= len(order); i++ {
+		if p := order[(at+i)%len(order)]; m.focusable(p) {
+			m.focus = p
+			return
+		}
+	}
+}
+
+// moveLine is ↑ / ↓ and j / k: a line of the diff, a commit, or a file,
+// depending on which panel has focus.
+func (m *Model) moveLine(delta int) {
+	switch m.panelFocus() {
+	case focusCommits:
+		m.loadCommit(m.commitIdx + delta)
+	case focusTree:
+		tree := buildTree(m.files, m.collapsed)
+		next := min(max(m.treeSel(tree)+delta, 0), len(tree)-1)
+		if l := tree[next]; l.file < 0 {
+			m.treeDir = l.path
+		} else {
+			m.treeDir = ""
+			m.moveTo(m.view.FileRows[l.file])
+		}
+	default:
+		m.step(delta)
+	}
+}
+
+// treeSel is the tree line the sidebar highlights: the selected directory while
+// the tree has focus, otherwise the current file or the collapsed directory
+// hiding it.
+func (m *Model) treeSel(tree []treeLine) int {
+	if m.treeDir != "" && m.panelFocus() == focusTree {
+		if i := dirIndexOf(tree, m.treeDir); i >= 0 {
+			return i
+		}
+	}
+	return treeIndexOf(tree, m.currentFile())
+}
+
+// dirKey folds or unfolds the selected directory: space toggles, - folds, +
+// unfolds. It reports whether a directory was selected to act on.
+func (m *Model) dirKey(key string) bool {
+	if m.selectedDir() == nil {
+		return false
+	}
+	switch key {
+	case "space":
+		m.setCollapsed(m.treeDir, !m.collapsed[m.treeDir])
+	case "-":
+		m.setCollapsed(m.treeDir, true)
+	case "+", "=":
+		m.setCollapsed(m.treeDir, false)
+	default:
+		return false
+	}
+	return true
+}
+
+// selectedDir is the tree line for the folder the sidebar has selected, or nil
+// when the selection is a file or the tree does not have focus.
+func (m *Model) selectedDir() *treeLine {
+	if m.treeDir == "" || m.panelFocus() != focusTree {
+		return nil
+	}
+	tree := buildTree(m.files, m.collapsed)
+	i := dirIndexOf(tree, m.treeDir)
+	if i < 0 {
+		return nil
+	}
+	return &tree[i]
+}
+
+func (m *Model) setCollapsed(path string, shut bool) {
+	if m.collapsed == nil {
+		m.collapsed = map[string]bool{}
+	}
+	if shut {
+		m.collapsed[path] = true
+	} else {
+		delete(m.collapsed, path)
+	}
 }
 
 // Init starts following the working tree when live-follow is on; otherwise
@@ -430,14 +600,23 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // command runs the action bound to a key. It is shared by the keyboard and by
 // clicks on the status-bar option labels, so both do exactly the same thing.
 func (m *Model) command(key string) tea.Cmd {
+	if m.dirKey(key) {
+		return nil
+	}
 	switch key {
 	case "q", "ctrl+c":
 		return tea.Quit
 
 	case "j", "down":
-		m.step(1)
+		m.moveLine(1)
 	case "k", "up":
-		m.step(-1)
+		m.moveLine(-1)
+	case "ctrl+w":
+		m.cycleFocus()
+	case "shift+right":
+		m.resizeSidebar(1)
+	case "shift+left":
+		m.resizeSidebar(-1)
 	case "ctrl+d", "pgdown":
 		m.step(m.bodyHeight() / 2)
 	case "ctrl+u", "pgup":
@@ -466,8 +645,10 @@ func (m *Model) command(key string) tea.Cmd {
 	case "p":
 		m.moveTo(PrevIndex(m.view.HunkRows, m.cur))
 	case "]":
+		m.treeDir = ""
 		m.moveTo(NextIndex(m.view.FileRows, m.cur))
 	case "[":
+		m.treeDir = ""
 		m.moveTo(PrevIndex(m.view.FileRows, m.cur))
 	// Commits run newest first, so } walks back in time — the direction git log
 	// prints. Both clamp at the ends rather than wrapping, like ] and [.
@@ -489,6 +670,7 @@ func (m *Model) command(key string) tea.Cmd {
 		m.rebuildIfNeeded()
 	case "b":
 		m.wantSidebar = !m.wantSidebar
+		m.focus = focusDiff
 		m.rebuildIfNeeded()
 	case "f":
 		return m.toggleFollow()
@@ -520,7 +702,7 @@ func (m *Model) command(key string) tea.Cmd {
 	case "E":
 		return m.openEditor()
 
-	case "space", "a", "d", "A", "D", "w", "u":
+	case "space", "a", "d", "w", "u":
 		if m.staging() {
 			m.handleMarkKey(key)
 		}
@@ -728,13 +910,16 @@ func (m *Model) handleClick(e tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			ci, fi := m.logSidebarAt(y)
 			switch {
 			case ci >= 0:
+				m.focus = focusCommits
 				m.loadCommit(ci)
 			case fi >= 0:
+				m.focus, m.treeDir = focusTree, ""
 				m.moveTo(m.view.FileRows[fi])
 			}
 			return m, nil
 		}
 		if idx := m.sidebarFileAt(y); idx >= 0 {
+			m.focus, m.treeDir = focusTree, ""
 			m.moveTo(m.view.FileRows[idx])
 		}
 		return m, nil
@@ -742,6 +927,7 @@ func (m *Model) handleClick(e tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 	// Body: put the cursor on the clicked row so the next mark or jump acts on
 	// what the user pointed at.
+	m.focus = focusDiff
 	if row := m.top + y; row < len(m.view.Rows) {
 		m.moveTo(row)
 	}
@@ -749,13 +935,20 @@ func (m *Model) handleClick(e tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 }
 
 // sidebarFileAt maps a body-row y to the file index drawn there, or -1 for a
-// blank line past the end. It mirrors the windowing in renderSidebar.
+// directory or a blank line past the end. It mirrors renderSidebar.
 func (m *Model) sidebarFileAt(y int) int {
-	idx := listStart(m.currentFile(), m.bodyHeight()) + y
-	if idx < 0 || idx >= len(m.files) {
+	return m.treeFileAt(y, m.bodyHeight())
+}
+
+// treeFileAt maps row y of a tree window h rows tall to the file drawn there,
+// or -1 for a directory or a blank row.
+func (m *Model) treeFileAt(y, h int) int {
+	tree := buildTree(m.files, m.collapsed)
+	idx := listStart(m.treeSel(tree), h) + y
+	if y < 0 || idx >= len(tree) {
 		return -1
 	}
-	return idx
+	return tree[idx].file
 }
 
 // handleWheel scrolls the diff a few lines per notch, the shape people expect
@@ -773,6 +966,18 @@ func (m *Model) handleWheel(e tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 
 // handleMarkKey applies the marking keys, which only exist in git review mode.
 func (m *Model) handleMarkKey(key string) {
+	// On a folder, a and d do what they always do, one level up: every file
+	// under it, rather than every hunk in one file. Space is the folder's fold
+	// toggle and never reaches here — marking a whole subtree is too much for
+	// the key that marks a single hunk.
+	// w and u still work from a folder row, so only a and d are taken here.
+	if dir := m.selectedDir(); dir != nil && (key == "a" || key == "d") {
+		for i := dir.lo; i < dir.hi; i++ {
+			m.markWholeFile(i, key == "a")
+		}
+		return
+	}
+
 	file, hunk := m.currentTarget()
 
 	switch key {
@@ -789,18 +994,12 @@ func (m *Model) handleMarkKey(key string) {
 			m.nextHunkInFile(file)
 		}
 	case "a":
-		m.marks.set(file, hunk, true)
-		m.moveTo(NextIndex(m.view.HunkRows, m.cur))
-	case "d":
-		m.marks.set(file, hunk, false)
-		m.moveTo(NextIndex(m.view.HunkRows, m.cur))
-	case "A":
 		m.markWholeFile(file, true)
-	case "D":
+	case "d":
 		m.markWholeFile(file, false)
 	case "w":
 		if hunks, _ := m.marks.total(); hunks == 0 {
-			m.msg = "nothing marked — space or a to mark a hunk"
+			m.msg = "nothing marked — space marks a hunk, a the whole file"
 			return
 		}
 		m.stage()
@@ -1068,19 +1267,10 @@ func (m *Model) rebuildIfNeeded() {
 	if m.split() == m.builtSplit {
 		return
 	}
-	var file int
-	if m.cur < len(m.view.Rows) {
-		file = m.view.Rows[m.cur].FileIdx
-	}
-
+	where := m.cursorIdentity()
 	m.builtSplit = m.split()
 	m.rebuildView()
-
-	m.cur = 0
-	if file < len(m.view.FileRows) {
-		m.cur = m.view.FileRows[file]
-	}
-	m.ensureVisible()
+	m.restoreCursor(where)
 }
 
 // View renders the current screen into the alternate screen buffer.
@@ -1117,11 +1307,18 @@ func (m *Model) renderScreen() string {
 	body := m.renderBody()
 	side := m.renderSidebar()
 
+	// Outside history mode, where the headers say it, the rule lights up while
+	// the tree has focus.
+	sep := m.st.gutter.Render("│")
+	if !m.logMode && m.panelFocus() == focusTree {
+		sep = m.st.focusRail.Render("│")
+	}
+
 	lines := make([]string, 0, m.bodyHeight()+1)
 	for i := 0; i < m.bodyHeight(); i++ {
 		line := body[i]
 		if side != nil {
-			line = side[i] + m.st.gutter.Render("│") + line
+			line = side[i] + sep + line
 		}
 		lines = append(lines, line)
 	}
@@ -1386,7 +1583,8 @@ func (m *Model) renderUnifiedRow(r Row, w int, hl func(string) []synSpan) string
 	return m.st.renderSide(side, sign, numWidth, w-numWidth-1, m.hscroll, m.showWS, hl)
 }
 
-// renderSidebar lists the changed files, or nil when there is no room for it.
+// renderSidebar draws the changed files as a tree, or nil when there is no room
+// for it.
 func (m *Model) renderSidebar() []string {
 	if !m.sidebar() {
 		return nil
@@ -1396,11 +1594,17 @@ func (m *Model) renderSidebar() []string {
 	if m.logMode {
 		return m.renderLogSidebar(h, w)
 	}
+	return m.renderTree(h, w)
+}
 
-	start := listStart(m.currentFile(), h)
+// renderTree draws h rows of the file tree, scrolled so the current file shows.
+func (m *Model) renderTree(h, w int) []string {
+	tree := buildTree(m.files, m.collapsed)
+	sel := m.treeSel(tree)
+	start := listStart(sel, h)
 	out := make([]string, 0, h)
 	for i := 0; i < h; i++ {
-		out = append(out, m.fileLine(start+i, w))
+		out = append(out, m.treeRow(tree, start+i, w, start+i == sel))
 	}
 	return out
 }
@@ -1422,26 +1626,81 @@ func listStart(cur, h int) int {
 	return 0
 }
 
-// fileLine renders one row of the file list, or a blank row past the end.
-func (m *Model) fileLine(idx, w int) string {
-	if idx < 0 || idx >= len(m.files) {
+// treeRow renders one line of the tree, or a blank row past the end. A selected
+// file gets the accent; a selected directory only a muted bar, since it has no
+// diff of its own, plus the - or + that space would do to it. A collapsed
+// directory always shows its +. A directory turns green once every file under
+// it is approved.
+func (m *Model) treeRow(tree []treeLine, idx, w int, sel bool) string {
+	if idx < 0 || idx >= len(tree) {
 		return m.st.sidebar.Render(strings.Repeat(" ", w))
 	}
-	f := m.files[idx]
+	l := tree[idx]
 	style := m.st.sidebar
-	if idx == m.currentFile() {
+
+	if l.file < 0 {
+		if sel {
+			style = m.st.sidebarDirSel
+		}
+		name := style
+		if m.allApproved(l.lo, l.hi) {
+			name = style.Foreground(m.st.stagedFg)
+		}
+		// The glyph takes the place of the connector's dash, so nothing shifts.
+		conn := l.prefix[len(l.prefix)-len("├─"):]
+		switch {
+		case m.collapsed[l.path]:
+			conn = strings.TrimSuffix(conn, "─") + "+"
+		case sel:
+			conn = strings.TrimSuffix(conn, "─") + "-"
+		}
+		room := w - lipgloss.Width(" "+l.prefix+"/")
+		line := style.Render(" "+l.prefix[:len(l.prefix)-len("├─")]) +
+			name.Render(conn+clip(l.name, room)+"/")
+		return fit(line, 0, w, style)
+	}
+
+	f := m.files[l.file]
+	if sel {
 		style = m.st.sidebarSel
 	}
-
-	if !m.staging() {
-		label := fmt.Sprintf(" %s  +%d -%d", shortPath(f.Path(), w-10), f.Added, f.Removed)
-		return fit(style.Render(label), 0, w, style)
+	adds := fmt.Sprintf("+%d", f.Added)
+	dels := fmt.Sprintf(" -%d", f.Removed)
+	// The green/red counts are unreadable on the selected row's accent
+	// background, so there they take the selection's own foreground.
+	counts := style.Render(adds + dels)
+	if !sel {
+		counts = style.Foreground(m.st.addedFg).Render(adds) +
+			style.Foreground(m.st.removedFg).Render(dels)
 	}
+	lead := style.Render(" " + l.prefix)
+	if m.staging() {
+		symbol, symStyle := m.fileGlyph(l.file, f, style)
+		lead += symStyle.Render(symbol) + style.Render(" ")
+	}
+	// The counts sit flush right, so the name takes what is left minus a gap.
+	room := w - lipgloss.Width(lead) - lipgloss.Width(adds+dels) - 2
+	name := clip(l.name, max(room, 1))
+	gap := max(w-lipgloss.Width(lead+name)-lipgloss.Width(adds+dels), 1)
+	return fit(lead+style.Render(name+strings.Repeat(" ", gap))+counts, 0, w, style)
+}
 
-	symbol, symStyle := m.fileGlyph(idx, f, style)
-	rest := fmt.Sprintf("%s  +%d -%d", shortPath(f.Path(), w-12), f.Added, f.Removed)
-	line := style.Render(" ") + symStyle.Render(symbol) + style.Render(" "+rest)
-	return fit(line, 0, w, style)
+// approved reports whether a file needs nothing more from the reviewer: every
+// hunk left is marked, or it is staged with nothing left over.
+func (m *Model) approved(i int) bool {
+	f := m.files[i]
+	p := f.Path()
+	return m.marks.state(i, f) == fileAllMarked || m.staged[p] && !m.unstaged[p]
+}
+
+// allApproved reports whether every file in [lo, hi) is approved.
+func (m *Model) allApproved(lo, hi int) bool {
+	for i := lo; i < hi; i++ {
+		if !m.approved(i) {
+			return false
+		}
+	}
+	return hi > lo
 }
 
 // fileGlyph is the sidebar symbol for a file and the style to draw it in.
@@ -1460,15 +1719,6 @@ func (m *Model) fileGlyph(idx int, f diff.File, base lipgloss.Style) (string, li
 	default:
 		return "·", base
 	}
-}
-
-// shortPath trims a path from the left, keeping the filename, which is the part
-// that identifies it.
-func shortPath(p string, w int) string {
-	if w < 4 || len(p) <= w {
-		return p
-	}
-	return "…" + p[len(p)-w+1:]
 }
 
 func (m *Model) renderStatus() string {
@@ -1561,8 +1811,8 @@ func (m *Model) renderStatus() string {
 		if m.context != diff.DefaultContext {
 			left += fmt.Sprintf("  ·  ⋯ %d", m.context)
 		}
-		opts = []hintZone{{key: "space"}, {key: "A"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "+"}, {key: "W"}, {key: "H"}, {key: "/"}, {key: "F"}, {key: "?"}, {key: "q"}}
-		labels = []string{"space mark", "A file", "w stage", "u undo", "f follow", "i ws", "+/- ctx", "W space", "H syntax", "/ search", "F filter", "? help", "q quit"}
+		opts = []hintZone{{key: "space"}, {key: "a"}, {key: "w"}, {key: "u"}, {key: "f"}, {key: "i"}, {key: "+"}, {key: "W"}, {key: "H"}, {key: "/"}, {key: "F"}, {key: "?"}, {key: "q"}}
+		labels = []string{"space mark", "a/d file", "w stage", "u undo", "f follow", "i ws", "+/- ctx", "W space", "H syntax", "/ search", "F filter", "? help", "q quit"}
 	}
 
 	right := strings.Join(labels, "  ") + " "
@@ -1624,6 +1874,9 @@ func (m *Model) renderHelp() string {
 		{"h / l, ← / →", "scroll sideways"},
 		{"s", "toggle side-by-side / unified"},
 		{"b", "toggle the file sidebar"},
+		{"shift-← / →", "narrow / widen the sidebar"},
+		{"ctrl-w", "move focus to the sidebar and back; j / k follow it"},
+		{"space, - / +", "on a sidebar folder: toggle, fold / unfold it"},
 		{"?", "this help"},
 		{"q", "quit"},
 		{"", ""},
@@ -1633,6 +1886,7 @@ func (m *Model) renderHelp() string {
 		rows = append(rows,
 			[2]string{"", ""},
 			[2]string{"} / {", "older / newer commit"},
+			[2]string{"ctrl-w", "focus the diff, then commits, then files"},
 			[2]string{"i", "ignore / show whitespace-only changes"},
 			[2]string{"+ / -", "more / less context around each hunk"},
 		)
@@ -1641,8 +1895,7 @@ func (m *Model) renderHelp() string {
 		rows = append(rows,
 			[2]string{"", ""},
 			[2]string{"space", "mark this hunk and move to the next one in the file"},
-			[2]string{"a / d", "mark / unmark, then jump to the next hunk"},
-			[2]string{"A / D", "mark / unmark every hunk in this file"},
+			[2]string{"a / d", "mark / unmark this file, or every file in a folder"},
 			[2]string{"w", "stage what is marked"},
 			[2]string{"u", "undo the last stage"},
 			[2]string{"E", "edit this file at the cursor in $VISUAL / $EDITOR"},
