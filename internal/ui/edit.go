@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,26 @@ func editorName(editor string) string {
 		}
 	}
 	return filepath.Base(strings.Fields(editor)[0])
+}
+
+func editorDoneToast(msg editorDoneMsg) string {
+	name := editorName(msg.editor)
+	if msg.err != nil {
+		if msg.exitCode == 127 && name != "" {
+			return fmt.Sprintf("`%s` not found — check $VISUAL / $EDITOR", name)
+		}
+		if name == "" {
+			name = "editor"
+		}
+		return name + ": " + firstLine(msg.err.Error())
+	}
+	if msg.elapsed < 500*time.Millisecond && (name == "code" || name == "subl" || name == "zed") && !strings.Contains(msg.editor, "--wait") {
+		return fmt.Sprintf("`%s` returned immediately — try EDITOR='%s --wait'", name, msg.editor)
+	}
+	if msg.path != "" {
+		return "reloaded " + msg.path
+	}
+	return ""
 }
 
 // editLine is the line of the new file the cursor points at. A removed line
