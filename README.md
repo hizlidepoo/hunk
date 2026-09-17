@@ -110,7 +110,7 @@ review mode you get:
 | Key | Action |
 |---|---|
 | `space` | mark this hunk and move to the next one in the file |
-| `a` / `d` | mark / unmark every hunk in this file |
+| `a` / `d` | mark / unmark every hunk in this file, or every file in a selected folder |
 | `w` | stage what is marked |
 | `u` | undo the last stage |
 | `E` | edit the file in your editor, at the cursor's line |
@@ -133,7 +133,9 @@ after which `j` / `k` and ↑ / ↓ move line by line, folders included; every o
 key still works on the diff, and `ctrl+w` again or a click in the diff hands
 focus back. A folder under the cursor gets a muted bar instead of the accent —
 it has no diff of its own — and a `-` or `+`: `space` toggles it, `-` folds it,
-`+` unfolds it. A folded folder keeps its `+`, and stands in for any hidden file
+`+` unfolds it. `a` / `d` on a folder mark and unmark every file under it, the
+same keys as on a file, one level up. A folded folder keeps its `+`, and stands
+in for any hidden file
 that `]` / `[` land on. `]` / `[` and clicks only ever pick files. Folders turn
 green once every file under them is approved — all of its hunks marked, or
 fully staged, or staged with the rest marked.

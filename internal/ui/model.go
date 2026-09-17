@@ -462,8 +462,7 @@ func (m *Model) treeSel(tree []treeLine) int {
 // dirKey folds or unfolds the selected directory: space toggles, - folds, +
 // unfolds. It reports whether a directory was selected to act on.
 func (m *Model) dirKey(key string) bool {
-	if m.treeDir == "" || m.panelFocus() != focusTree ||
-		dirIndexOf(buildTree(m.files, m.collapsed), m.treeDir) < 0 {
+	if m.selectedDir() == nil {
 		return false
 	}
 	switch key {
@@ -477,6 +476,20 @@ func (m *Model) dirKey(key string) bool {
 		return false
 	}
 	return true
+}
+
+// selectedDir is the tree line for the folder the sidebar has selected, or nil
+// when the selection is a file or the tree does not have focus.
+func (m *Model) selectedDir() *treeLine {
+	if m.treeDir == "" || m.panelFocus() != focusTree {
+		return nil
+	}
+	tree := buildTree(m.files, m.collapsed)
+	i := dirIndexOf(tree, m.treeDir)
+	if i < 0 {
+		return nil
+	}
+	return &tree[i]
 }
 
 func (m *Model) setCollapsed(path string, shut bool) {
@@ -953,6 +966,18 @@ func (m *Model) handleWheel(e tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 
 // handleMarkKey applies the marking keys, which only exist in git review mode.
 func (m *Model) handleMarkKey(key string) {
+	// On a folder, a and d do what they always do, one level up: every file
+	// under it, rather than every hunk in one file. Space is the folder's fold
+	// toggle and never reaches here — marking a whole subtree is too much for
+	// the key that marks a single hunk.
+	// w and u still work from a folder row, so only a and d are taken here.
+	if dir := m.selectedDir(); dir != nil && (key == "a" || key == "d") {
+		for i := dir.lo; i < dir.hi; i++ {
+			m.markWholeFile(i, key == "a")
+		}
+		return
+	}
+
 	file, hunk := m.currentTarget()
 
 	switch key {
@@ -1639,14 +1664,25 @@ func (m *Model) treeRow(tree []treeLine, idx, w int, sel bool) string {
 	if sel {
 		style = m.st.sidebarSel
 	}
-	counts := fmt.Sprintf("  +%d -%d", f.Added, f.Removed)
+	adds := fmt.Sprintf("+%d", f.Added)
+	dels := fmt.Sprintf(" -%d", f.Removed)
+	// The green/red counts are unreadable on the selected row's accent
+	// background, so there they take the selection's own foreground.
+	counts := style.Render(adds + dels)
+	if !sel {
+		counts = style.Foreground(m.st.addedFg).Render(adds) +
+			style.Foreground(m.st.removedFg).Render(dels)
+	}
 	lead := style.Render(" " + l.prefix)
 	if m.staging() {
 		symbol, symStyle := m.fileGlyph(l.file, f, style)
 		lead += symStyle.Render(symbol) + style.Render(" ")
 	}
-	room := w - lipgloss.Width(lead) - lipgloss.Width(counts)
-	return fit(lead+style.Render(clip(l.name, max(room, 1))+counts), 0, w, style)
+	// The counts sit flush right, so the name takes what is left minus a gap.
+	room := w - lipgloss.Width(lead) - lipgloss.Width(adds+dels) - 2
+	name := clip(l.name, max(room, 1))
+	gap := max(w-lipgloss.Width(lead+name)-lipgloss.Width(adds+dels), 1)
+	return fit(lead+style.Render(name+strings.Repeat(" ", gap))+counts, 0, w, style)
 }
 
 // approved reports whether a file needs nothing more from the reviewer: every
@@ -1859,7 +1895,7 @@ func (m *Model) renderHelp() string {
 		rows = append(rows,
 			[2]string{"", ""},
 			[2]string{"space", "mark this hunk and move to the next one in the file"},
-			[2]string{"a / d", "mark / unmark every hunk in this file"},
+			[2]string{"a / d", "mark / unmark this file, or every file in a folder"},
 			[2]string{"w", "stage what is marked"},
 			[2]string{"u", "undo the last stage"},
 			[2]string{"E", "edit this file at the cursor in $VISUAL / $EDITOR"},

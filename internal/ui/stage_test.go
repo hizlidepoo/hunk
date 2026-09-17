@@ -92,7 +92,11 @@ func gitModelOpts(t *testing.T, committed, edited map[string]string, opts Option
 	}
 	write := func(name, content string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -511,6 +515,57 @@ func TestMarkWholeFileKeys(t *testing.T) {
 	if hunks, _ := m.marks.total(); hunks != 0 {
 		t.Errorf("d left %d marks", hunks)
 	}
+}
+
+// On a folder in the sidebar, a and d mark and unmark every file under it —
+// the same keys as on a file, one level up. Space stays the fold toggle.
+func TestMarkKeysOnAFolder(t *testing.T) {
+	base := lines(20)
+	edited := replaceLine(base, 5, "CHANGED")
+	m, _ := gitModel(t,
+		map[string]string{"dir/a.txt": base, "dir/b.txt": base, "top.txt": base},
+		map[string]string{"dir/a.txt": edited, "dir/b.txt": edited, "top.txt": edited})
+	screen(t, m, 140, 20)
+
+	// The tree opens on dir/a.txt; k steps up onto the dir/ row above it.
+	m.command("ctrl+w")
+	m.command("k")
+	if m.treeDir != "dir" {
+		t.Fatalf("k selected %q, want the dir/ row", m.treeDir)
+	}
+
+	m.command("a")
+	if hunks, files := m.marks.total(); hunks != 2 || files != 2 {
+		t.Errorf("a on dir/ marked %d hunks in %d files, want 2 in 2", hunks, files)
+	}
+	if m.marks.inFile(indexOfPath(t, m, "top.txt")) != 0 {
+		t.Error("a on dir/ marked a file outside it")
+	}
+
+	m.command("d")
+	if hunks, _ := m.marks.total(); hunks != 0 {
+		t.Errorf("d on dir/ left %d marks, want the folder cleared", hunks)
+	}
+
+	// Space on the folder folds it instead of marking anything.
+	m.command("space")
+	if !m.collapsed["dir"] {
+		t.Error("space on dir/ did not fold it")
+	}
+	if hunks, _ := m.marks.total(); hunks != 0 {
+		t.Errorf("space on dir/ marked %d hunks, want none", hunks)
+	}
+}
+
+func indexOfPath(t *testing.T, m *Model, path string) int {
+	t.Helper()
+	for i, f := range m.files {
+		if f.Path() == path {
+			return i
+		}
+	}
+	t.Fatalf("no file %q in %v", path, m.files)
+	return -1
 }
 
 func TestMarkKeysDoNothingWithoutARepo(t *testing.T) {

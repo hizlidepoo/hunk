@@ -80,10 +80,17 @@ func TestSidebarDrawsTheTree(t *testing.T) {
 	m := newTestModel(t, treeDiff(treePaths...))
 	lines := screen(t, m, 120, 12)
 
-	for i, want := range []string{"├─README", "├─a/", "│ ├─b/", "│ │ └─c.go  +1 -1", "└─b.go  +1 -1"} {
+	for i, want := range []string{"├─README", "├─a/", "│ ├─b/", "│ │ └─c.go", "└─b.go"} {
 		row := []int{0, 1, 2, 3, 6}[i]
 		if !strings.Contains(lines[row], want) {
 			t.Errorf("sidebar row %d = %q, want it to contain %q", row, lines[row], want)
+		}
+	}
+	// The counts hug the right edge of the sidebar column.
+	for _, row := range []int{3, 6} {
+		side := string([]rune(lines[row])[:sidebarWidth])
+		if !strings.HasSuffix(side, "+1 -1") {
+			t.Errorf("sidebar row %d = %q, want counts flush right", row, side)
 		}
 	}
 }

@@ -49,8 +49,11 @@ type styles struct {
 
 	// stagedFg / partialFg color the sidebar check: green when a file is fully
 	// staged, gray when only some of it is.
-	stagedFg    color.Color
-	partialFg   color.Color
+	stagedFg  color.Color
+	partialFg color.Color
+	// addedFg / removedFg color the +N -N counts in the sidebar.
+	addedFg     color.Color
+	removedFg   color.Color
 	context     lipgloss.Style
 	added       lipgloss.Style
 	removed     lipgloss.Style
@@ -86,6 +89,8 @@ func newStyles(t *theme.Theme) styles {
 		focusHeader:   base.Background(c(t.UI.Accent)).Foreground(c(t.UI.Background)).Bold(true),
 		railMarked:    base.Foreground(c(t.Diff.AddedFg)).Bold(true),
 		stagedFg:      c(t.Diff.AddedFg),
+		addedFg:       c(t.Diff.AddedFg),
+		removedFg:     c(t.Diff.RemovedFg),
 		partialFg:     c(t.UI.LineNumber),
 		context:       base.Foreground(c(t.Diff.ContextFg)),
 		added:         base.Background(c(t.Diff.AddedBg)).Foreground(c(t.Diff.AddedFg)),
