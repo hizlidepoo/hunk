@@ -46,27 +46,20 @@ func editorCmd(editor, path string, line int) *exec.Cmd {
 }
 
 // editLine is the line of the new file the cursor points at. A removed line
-// has no place in the new file, so it opens where the change lands instead.
+// has no place in the new file, so it opens at the next line that does: where
+// the change lands. A header opens at its first hunk the same way.
+//
+// ponytail: removed lines at the very end of a file, with nothing after them,
+// open at line 1; fall back to the hunk's NewStart if that ever bothers anyone.
 func (m *Model) editLine() int {
-	row := m.view.Rows[m.cur]
-	if row.Right.Num > 0 {
-		return row.Right.Num
-	}
-	f := m.files[row.FileIdx]
-	if row.HunkIdx < 0 {
-		if len(f.Hunks) == 0 {
-			return 1
-		}
-		return max(f.Hunks[0].NewStart, 1)
-	}
-	for i := m.cur + 1; i < len(m.view.Rows); i++ {
-		r := m.view.Rows[i]
-		if r.FileIdx != row.FileIdx || r.HunkIdx != row.HunkIdx {
+	file := m.view.Rows[m.cur].FileIdx
+	for _, r := range m.view.Rows[m.cur:] {
+		if r.FileIdx != file {
 			break
 		}
 		if r.Right.Num > 0 {
 			return r.Right.Num
 		}
 	}
-	return max(f.Hunks[row.HunkIdx].NewStart, 1)
+	return 1
 }
