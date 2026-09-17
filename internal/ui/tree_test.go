@@ -45,7 +45,7 @@ func TestFilesAreInTreeOrder(t *testing.T) {
 
 func TestBuildTreeDrawsConnectors(t *testing.T) {
 	m := newTestModel(t, treeDiff(treePaths...))
-	tree := buildTree(m.files)
+	tree := buildTree(m.files, nil)
 
 	want := []string{
 		"├─README",
@@ -129,12 +129,15 @@ func TestFileKeysFollowTheTree(t *testing.T) {
 	}
 	m.moveTo(0)
 	m.command("ctrl+w")
-	for range m.files {
-		tree = append(tree, m.files[m.currentFile()].Path())
+	// j also stops on directories; those leave the current file alone.
+	for range buildTree(m.files, nil) {
+		if m.treeDir == "" {
+			tree = append(tree, m.files[m.currentFile()].Path())
+		}
 		m.command("j")
 	}
 	var drawn []string
-	for _, l := range buildTree(m.files) {
+	for _, l := range buildTree(m.files, nil) {
 		if l.file >= 0 {
 			drawn = append(drawn, m.files[l.file].Path())
 		}
@@ -326,11 +329,11 @@ func TestDirectoryTurnsGreenWhenEverythingUnderItIsApproved(t *testing.T) {
 	m := newTestModel(t, treeDiff(treePaths...))
 	screen(t, m, 120, 20)
 	m.marks = marks{}
-	tree := buildTree(m.files)
+	tree := buildTree(m.files, nil)
 	green := func(i int) bool {
 		l := tree[i]
 		want := m.st.sidebar.Foreground(m.st.stagedFg).Render(l.prefix[len(l.prefix)-len("├─"):] + l.name + "/")
-		return strings.Contains(m.treeRow(tree, i, sidebarWidth), want)
+		return strings.Contains(m.treeRow(tree, i, sidebarWidth, false), want)
 	}
 
 	if green(1) || green(2) {
@@ -405,5 +408,60 @@ func TestStagedFilesAreApproved(t *testing.T) {
 		if string(after) != string(b) {
 			t.Errorf("staging changed %s in the working tree", name)
 		}
+	}
+}
+
+func TestFoldingADirectory(t *testing.T) {
+	m := newTestModel(t, treeDiff(treePaths...))
+	screen(t, m, 120, 20)
+	m.command("ctrl+w")
+	m.command("j") // README -> a/
+	if m.treeDir != "a" || m.currentFile() != 0 {
+		t.Fatalf("j onto a/ selected %q with file %d, want a with README still current", m.treeDir, m.currentFile())
+	}
+	names := func() (out []string) {
+		for _, l := range buildTree(m.files, m.collapsed) {
+			out = append(out, l.name)
+		}
+		return out
+	}
+
+	// space folds it: its line stays, everything under it goes.
+	m.command("space")
+	if want := []string{"README", "a", "a.go", "b.go"}; !slices.Equal(names(), want) {
+		t.Fatalf("space on a/ drew %v, want %v", names(), want)
+	}
+	if out := strings.Join(screen(t, m, 120, 20), "\n"); !strings.Contains(ansi.Strip(out), "├+a/") {
+		t.Errorf("folded a/ has no +:\n%s", out)
+	}
+	m.command("j")
+	if m.files[m.currentFile()].Path() != "a.go" {
+		t.Errorf("j past folded a/ landed on %s, want a.go", m.files[m.currentFile()].Path())
+	}
+	m.command("k")
+	m.command("+")
+	if len(names()) != 7 {
+		t.Errorf("+ on a/ drew %v, want everything open", names())
+	}
+	m.command("-")
+	if len(names()) != 4 {
+		t.Errorf("- on a/ drew %v, want a/ folded", names())
+	}
+
+	// [ leaves the directory for a file and does not unfold it; a file hidden
+	// inside the fold is shown by highlighting the fold.
+	m.command("[") // from a.go
+	if m.treeDir != "" || m.files[m.currentFile()].Path() != "a/z.go" {
+		t.Errorf("[ from a/ gave dir %q file %s", m.treeDir, m.files[m.currentFile()].Path())
+	}
+	if tree := buildTree(m.files, m.collapsed); tree[m.treeSel(tree)].name != "a" {
+		t.Errorf("hidden a/z.go highlights %s, want a/", tree[m.treeSel(tree)].name)
+	}
+
+	// With the cursor on a file, - is the context key again, not a fold.
+	m.command("ctrl+w")
+	m.command("-")
+	if len(names()) != 4 {
+		t.Errorf("- in the diff changed the tree: %v", names())
 	}
 }

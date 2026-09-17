@@ -76,6 +76,12 @@ type Model struct {
 	// focus is the panel ↑ / ↓ and j / k act on. ctrl+w cycles it.
 	focus panel
 
+	// collapsed holds the directory paths folded shut in the tree. treeDir is the
+	// directory the tree cursor rests on, or "" when it is on the current file;
+	// it only counts while the tree has focus.
+	collapsed map[string]bool
+	treeDir   string
+
 	showHelp bool
 
 	// Git review mode. repo is nil for a plain diff, in which case marking and
@@ -408,6 +414,7 @@ func (m *Model) focusable(p panel) bool {
 func (m *Model) cycleFocus() {
 	order := []panel{focusDiff, focusCommits, focusTree}
 	at := slices.Index(order, m.panelFocus())
+	m.treeDir = ""
 	for i := 1; i <= len(order); i++ {
 		if p := order[(at+i)%len(order)]; m.focusable(p) {
 			m.focus = p
@@ -423,10 +430,59 @@ func (m *Model) moveLine(delta int) {
 	case focusCommits:
 		m.loadCommit(m.commitIdx + delta)
 	case focusTree:
-		next := min(max(m.currentFile()+delta, 0), len(m.view.FileRows)-1)
-		m.moveTo(m.view.FileRows[next])
+		tree := buildTree(m.files, m.collapsed)
+		next := min(max(m.treeSel(tree)+delta, 0), len(tree)-1)
+		if l := tree[next]; l.file < 0 {
+			m.treeDir = l.path
+		} else {
+			m.treeDir = ""
+			m.moveTo(m.view.FileRows[l.file])
+		}
 	default:
 		m.step(delta)
+	}
+}
+
+// treeSel is the tree line the sidebar highlights: the selected directory while
+// the tree has focus, otherwise the current file or the collapsed directory
+// hiding it.
+func (m *Model) treeSel(tree []treeLine) int {
+	if m.treeDir != "" && m.panelFocus() == focusTree {
+		if i := dirIndexOf(tree, m.treeDir); i >= 0 {
+			return i
+		}
+	}
+	return treeIndexOf(tree, m.currentFile())
+}
+
+// dirKey folds or unfolds the selected directory: space toggles, - folds, +
+// unfolds. It reports whether a directory was selected to act on.
+func (m *Model) dirKey(key string) bool {
+	if m.treeDir == "" || m.panelFocus() != focusTree ||
+		dirIndexOf(buildTree(m.files, m.collapsed), m.treeDir) < 0 {
+		return false
+	}
+	switch key {
+	case "space":
+		m.setCollapsed(m.treeDir, !m.collapsed[m.treeDir])
+	case "-":
+		m.setCollapsed(m.treeDir, true)
+	case "+", "=":
+		m.setCollapsed(m.treeDir, false)
+	default:
+		return false
+	}
+	return true
+}
+
+func (m *Model) setCollapsed(path string, shut bool) {
+	if m.collapsed == nil {
+		m.collapsed = map[string]bool{}
+	}
+	if shut {
+		m.collapsed[path] = true
+	} else {
+		delete(m.collapsed, path)
 	}
 }
 
@@ -512,6 +568,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // command runs the action bound to a key. It is shared by the keyboard and by
 // clicks on the status-bar option labels, so both do exactly the same thing.
 func (m *Model) command(key string) tea.Cmd {
+	if m.dirKey(key) {
+		return nil
+	}
 	switch key {
 	case "q", "ctrl+c":
 		return tea.Quit
@@ -554,8 +613,10 @@ func (m *Model) command(key string) tea.Cmd {
 	case "p":
 		m.moveTo(PrevIndex(m.view.HunkRows, m.cur))
 	case "]":
+		m.treeDir = ""
 		m.moveTo(NextIndex(m.view.FileRows, m.cur))
 	case "[":
+		m.treeDir = ""
 		m.moveTo(PrevIndex(m.view.FileRows, m.cur))
 	// Commits run newest first, so } walks back in time — the direction git log
 	// prints. Both clamp at the ends rather than wrapping, like ] and [.
@@ -817,13 +878,13 @@ func (m *Model) handleClick(e tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 				m.focus = focusCommits
 				m.loadCommit(ci)
 			case fi >= 0:
-				m.focus = focusTree
+				m.focus, m.treeDir = focusTree, ""
 				m.moveTo(m.view.FileRows[fi])
 			}
 			return m, nil
 		}
 		if idx := m.sidebarFileAt(y); idx >= 0 {
-			m.focus = focusTree
+			m.focus, m.treeDir = focusTree, ""
 			m.moveTo(m.view.FileRows[idx])
 		}
 		return m, nil
@@ -847,8 +908,8 @@ func (m *Model) sidebarFileAt(y int) int {
 // treeFileAt maps row y of a tree window h rows tall to the file drawn there,
 // or -1 for a directory or a blank row.
 func (m *Model) treeFileAt(y, h int) int {
-	tree := buildTree(m.files)
-	idx := listStart(treeIndexOf(tree, m.currentFile()), h) + y
+	tree := buildTree(m.files, m.collapsed)
+	idx := listStart(m.treeSel(tree), h) + y
 	if y < 0 || idx >= len(tree) {
 		return -1
 	}
@@ -1475,11 +1536,12 @@ func (m *Model) renderSidebar() []string {
 
 // renderTree draws h rows of the file tree, scrolled so the current file shows.
 func (m *Model) renderTree(h, w int) []string {
-	tree := buildTree(m.files)
-	start := listStart(treeIndexOf(tree, m.currentFile()), h)
+	tree := buildTree(m.files, m.collapsed)
+	sel := m.treeSel(tree)
+	start := listStart(sel, h)
 	out := make([]string, 0, h)
 	for i := 0; i < h; i++ {
-		out = append(out, m.treeRow(tree, start+i, w))
+		out = append(out, m.treeRow(tree, start+i, w, start+i == sel))
 	}
 	return out
 }
@@ -1501,10 +1563,12 @@ func listStart(cur, h int) int {
 	return 0
 }
 
-// treeRow renders one line of the tree, or a blank row past the end. Only the
-// current file is highlighted; a directory is context, and turns green once
-// every file under it is approved.
-func (m *Model) treeRow(tree []treeLine, idx, w int) string {
+// treeRow renders one line of the tree, or a blank row past the end. A selected
+// file gets the accent; a selected directory only a muted bar, since it has no
+// diff of its own, plus the - or + that space would do to it. A collapsed
+// directory always shows its +. A directory turns green once every file under
+// it is approved.
+func (m *Model) treeRow(tree []treeLine, idx, w int, sel bool) string {
 	if idx < 0 || idx >= len(tree) {
 		return m.st.sidebar.Render(strings.Repeat(" ", w))
 	}
@@ -1512,18 +1576,29 @@ func (m *Model) treeRow(tree []treeLine, idx, w int) string {
 	style := m.st.sidebar
 
 	if l.file < 0 {
+		if sel {
+			style = m.st.sidebarDirSel
+		}
 		name := style
 		if m.allApproved(l.lo, l.hi) {
 			name = style.Foreground(m.st.stagedFg)
 		}
+		// The glyph takes the place of the connector's dash, so nothing shifts.
+		conn := l.prefix[len(l.prefix)-len("├─"):]
+		switch {
+		case m.collapsed[l.path]:
+			conn = strings.TrimSuffix(conn, "─") + "+"
+		case sel:
+			conn = strings.TrimSuffix(conn, "─") + "-"
+		}
 		room := w - lipgloss.Width(" "+l.prefix+"/")
 		line := style.Render(" "+l.prefix[:len(l.prefix)-len("├─")]) +
-			name.Render(l.prefix[len(l.prefix)-len("├─"):]+clip(l.name, room)+"/")
+			name.Render(conn+clip(l.name, room)+"/")
 		return fit(line, 0, w, style)
 	}
 
 	f := m.files[l.file]
-	if l.file == m.currentFile() {
+	if sel {
 		style = m.st.sidebarSel
 	}
 	counts := fmt.Sprintf("  +%d -%d", f.Added, f.Removed)
@@ -1727,6 +1802,7 @@ func (m *Model) renderHelp() string {
 		{"b", "toggle the file sidebar"},
 		{"shift-← / →", "narrow / widen the sidebar"},
 		{"ctrl-w", "move focus to the sidebar and back; j / k follow it"},
+		{"space, - / +", "on a sidebar folder: toggle, fold / unfold it"},
 		{"?", "this help"},
 		{"q", "quit"},
 		{"", ""},

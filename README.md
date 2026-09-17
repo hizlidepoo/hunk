@@ -99,6 +99,7 @@ during the session.
 | `b` | toggle the file sidebar |
 | `shift+←` / `shift+→` | narrow / widen the sidebar |
 | `ctrl+w` | move focus between the diff and the sidebar |
+| `space`, `-` / `+` | on a sidebar folder: toggle, fold / unfold it |
 | `?` | help |
 | `q` | quit |
 | mouse | click a file, a row, or a status-bar option; the wheel scrolls |
@@ -119,13 +120,16 @@ review mode you get:
 Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.
 
-The sidebar is the changed files as a directory tree, always expanded and in
-alphabetical order — the same order `]` / `[` walk. `ctrl+w` moves focus to it
-(its rule lights up), after which `j` / `k` and ↑ / ↓ move from file to file;
-every other key still works on the diff, and `ctrl+w` again or a click in the
-diff hands focus back. Only files are selectable: directories are there for
-context, and turn green once every file under them is approved — all of its
-hunks marked, or fully staged, or staged with the rest marked.
+The sidebar is the changed files as a directory tree, in alphabetical order —
+the same order `]` / `[` walk. `ctrl+w` moves focus to it (its rule lights up),
+after which `j` / `k` and ↑ / ↓ move line by line, folders included; every other
+key still works on the diff, and `ctrl+w` again or a click in the diff hands
+focus back. A folder under the cursor gets a muted bar instead of the accent —
+it has no diff of its own — and a `-` or `+`: `space` toggles it, `-` folds it,
+`+` unfolds it. A folded folder keeps its `+`, and stands in for any hidden file
+that `]` / `[` land on. `]` / `[` and clicks only ever pick files. Folders turn
+green once every file under them is approved — all of its hunks marked, or
+fully staged, or staged with the rest marked.
 
 Each file line says where it stands: `·` untouched, `◐` some hunks marked,
 `●` all of them, `✓` already staged (gray when only part of it is). Untracked
