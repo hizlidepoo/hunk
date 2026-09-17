@@ -115,9 +115,11 @@ review mode you get:
 | `i` | ignore / show whitespace-only changes |
 | `+` / `-` | more / less context around each hunk |
 
-`E` suspends hunk and opens the file in `$EDITOR`, at the line under the
-cursor. Quit the editor and hunk comes back with the diff re-read and your marks
-and place kept. With `$EDITOR` unset, hunk says so instead of guessing.
+`E` suspends hunk and opens the file in `$VISUAL`, falling back to `$EDITOR`, at
+the line under the cursor. Quit the editor and hunk comes back with the diff
+re-read and your marks and place kept. hunk recognizes the line-jump syntax for
+Helix, VS Code, Sublime Text and Zed; other editors receive `+line file`. With
+both variables unset, hunk says so instead of guessing.
 
 Marking is `git add -p` without the one-hunk-at-a-time straitjacket: see the
 whole change, jump around, mark as you go, then write it all at once.

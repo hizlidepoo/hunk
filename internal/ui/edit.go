@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -24,9 +25,9 @@ func (m *Model) openEditor() tea.Cmd {
 	if f.IsDelete {
 		return m.toast(f.Path() + " was deleted — nothing to edit")
 	}
-	editor := os.Getenv("EDITOR")
+	editor := configuredEditor()
 	if editor == "" {
-		return m.toast("$EDITOR is not set — export EDITOR=vim (or your editor) to edit from hunk")
+		return m.toast("$VISUAL and $EDITOR are not set — export VISUAL=vim (or your editor) to edit from hunk")
 	}
 	root, err := m.repo.Root()
 	if err != nil {
@@ -36,13 +37,29 @@ func (m *Model) openEditor() tea.Cmd {
 	return tea.ExecProcess(cmd, func(err error) tea.Msg { return editorDoneMsg{err} })
 }
 
+func configuredEditor() string {
+	if editor := os.Getenv("VISUAL"); editor != "" {
+		return editor
+	}
+	return os.Getenv("EDITOR")
+}
+
 // editorCmd runs editor on path at line. The editor goes through sh the same
-// way git runs $EDITOR, so it can carry its own arguments ("code --wait").
-//
-// ponytail: +N is what vim, nvim, nano, emacs, micro and kakoune take. helix
-// and VS Code want path:N instead; special-case them by name if anyone asks.
+// way git runs $VISUAL/$EDITOR, so it can carry its own arguments ("code --wait").
 func editorCmd(editor, path string, line int) *exec.Cmd {
-	return exec.Command("sh", "-c", editor+` "$@"`, editor, "+"+strconv.Itoa(line), path)
+	n := strconv.Itoa(line)
+	args := []string{"+" + n, path}
+	fields := strings.Fields(editor)
+	if len(fields) > 0 {
+		switch filepath.Base(strings.Trim(fields[0], `"'`)) {
+		case "code":
+			args = []string{"--goto", path + ":" + n}
+		case "hx", "subl", "zed":
+			args = []string{path + ":" + n}
+		}
+	}
+	shellArgs := []string{"-c", editor + ` "$@"`, editor}
+	return exec.Command("sh", append(shellArgs, args...)...)
 }
 
 // editLine is the line of the new file the cursor points at. A removed line

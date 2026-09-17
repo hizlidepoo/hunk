@@ -54,11 +54,42 @@ func TestEditLineFollowsTheCursor(t *testing.T) {
 	}
 }
 
-func TestEditorCmdPassesLineAndPathThroughTheShell(t *testing.T) {
-	cmd := editorCmd("code --wait", "/repo/a.txt", 12)
-	want := []string{"sh", "-c", `code --wait "$@"`, "code --wait", "+12", "/repo/a.txt"}
-	if !slices.Equal(cmd.Args, want) {
-		t.Errorf("args = %q, want %q", cmd.Args, want)
+func TestEditorCmdPassesEditorSpecificLineArgumentsThroughTheShell(t *testing.T) {
+	tests := []struct {
+		editor string
+		args   []string
+	}{
+		{"vim", []string{"+12", "/repo/a.txt"}},
+		{"emacs -nw", []string{"+12", "/repo/a.txt"}},
+		{"emacsclient -t", []string{"+12", "/repo/a.txt"}},
+		{"/usr/local/bin/hx", []string{"/repo/a.txt:12"}},
+		{"code --wait", []string{"--goto", "/repo/a.txt:12"}},
+		{"/usr/local/bin/subl -w", []string{"/repo/a.txt:12"}},
+		{"zed --wait", []string{"/repo/a.txt:12"}},
+		{"unknown --flag", []string{"+12", "/repo/a.txt"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.editor, func(t *testing.T) {
+			cmd := editorCmd(tt.editor, "/repo/a.txt", 12)
+			want := append([]string{"sh", "-c", tt.editor + ` "$@"`, tt.editor}, tt.args...)
+			if !slices.Equal(cmd.Args, want) {
+				t.Errorf("args = %q, want %q", cmd.Args, want)
+			}
+		})
+	}
+}
+
+func TestConfiguredEditorPrefersVisual(t *testing.T) {
+	t.Setenv("EDITOR", "vim")
+	t.Setenv("VISUAL", "code --wait")
+	if got := configuredEditor(); got != "code --wait" {
+		t.Errorf("editor = %q, want $VISUAL", got)
+	}
+
+	t.Setenv("VISUAL", "")
+	if got := configuredEditor(); got != "vim" {
+		t.Errorf("editor = %q, want $EDITOR", got)
 	}
 }
 
@@ -109,9 +140,10 @@ func TestEditOnlyInTheWorkingTree(t *testing.T) {
 	}
 }
 
-// With no $EDITOR, e does not guess: a toast centered on the screen says what
-// to set, and goes away on its own.
+// With no editor configured, e does not guess: a toast centered on the screen
+// says what to set, and goes away on its own.
 func TestEditWithoutEditorShowsAToast(t *testing.T) {
+	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "")
 	base := lines(10)
 	m, _ := gitModel(t, map[string]string{"a.txt": base}, map[string]string{"a.txt": replaceLine(base, 3, "X")})
@@ -122,7 +154,7 @@ func TestEditWithoutEditorShowsAToast(t *testing.T) {
 		t.Fatal("no tick to take the toast down")
 	}
 	lines := screen(t, m, 140, 24)
-	if !strings.Contains(strings.Join(lines, "\n"), "$EDITOR is not set") {
+	if !strings.Contains(strings.Join(lines, "\n"), "$VISUAL and $EDITOR are not set") {
 		t.Errorf("toast not on screen:\n%s", strings.Join(lines, "\n"))
 	}
 	if len(lines) != 24 {
@@ -137,7 +169,7 @@ func TestEditWithoutEditorShowsAToast(t *testing.T) {
 	}
 	now = now.Add(time.Second)
 	m.Update(toastDoneMsg{})
-	if m.toastText != "" || strings.Contains(strings.Join(screen(t, m, 140, 24), "\n"), "$EDITOR") {
+	if m.toastText != "" || strings.Contains(strings.Join(screen(t, m, 140, 24), "\n"), "$VISUAL") {
 		t.Error("toast stayed up past its time")
 	}
 }

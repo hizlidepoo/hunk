@@ -1645,7 +1645,7 @@ func (m *Model) renderHelp() string {
 			[2]string{"A / D", "mark / unmark every hunk in this file"},
 			[2]string{"w", "stage what is marked"},
 			[2]string{"u", "undo the last stage"},
-			[2]string{"E", "edit this file at the cursor in $EDITOR"},
+			[2]string{"E", "edit this file at the cursor in $VISUAL / $EDITOR"},
 			[2]string{"f", "pause / resume following file changes"},
 			[2]string{"i", "ignore / show whitespace-only changes"},
 			[2]string{"+ / -", "more / less context around each hunk"},
