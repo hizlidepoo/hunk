@@ -64,6 +64,7 @@ func TestEditorCmdPassesEditorSpecificLineArgumentsThroughTheShell(t *testing.T)
 		{"emacsclient -t", []string{"+12", "/repo/a.txt"}},
 		{"/usr/local/bin/hx", []string{"/repo/a.txt:12"}},
 		{"code --wait", []string{"--goto", "/repo/a.txt:12"}},
+		{`"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --wait`, []string{"--goto", "/repo/a.txt:12"}},
 		{"/usr/local/bin/subl -w", []string{"/repo/a.txt:12"}},
 		{"zed --wait", []string{"/repo/a.txt:12"}},
 		{"unknown --flag", []string{"+12", "/repo/a.txt"}},

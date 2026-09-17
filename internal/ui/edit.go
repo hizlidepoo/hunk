@@ -49,9 +49,8 @@ func configuredEditor() string {
 func editorCmd(editor, path string, line int) *exec.Cmd {
 	n := strconv.Itoa(line)
 	args := []string{"+" + n, path}
-	fields := strings.Fields(editor)
-	if len(fields) > 0 {
-		switch filepath.Base(strings.Trim(fields[0], `"'`)) {
+	if name := editorName(editor); name != "" {
+		switch name {
 		case "code":
 			args = []string{"--goto", path + ":" + n}
 		case "hx", "subl", "zed":
@@ -60,6 +59,19 @@ func editorCmd(editor, path string, line int) *exec.Cmd {
 	}
 	shellArgs := []string{"-c", editor + ` "$@"`, editor}
 	return exec.Command("sh", append(shellArgs, args...)...)
+}
+
+func editorName(editor string) string {
+	editor = strings.TrimSpace(editor)
+	if editor == "" {
+		return ""
+	}
+	if quote := editor[0]; quote == '\'' || quote == '"' {
+		if end := strings.IndexByte(editor[1:], quote); end >= 0 {
+			return filepath.Base(editor[1 : end+1])
+		}
+	}
+	return filepath.Base(strings.Fields(editor)[0])
 }
 
 // editLine is the line of the new file the cursor points at. A removed line
